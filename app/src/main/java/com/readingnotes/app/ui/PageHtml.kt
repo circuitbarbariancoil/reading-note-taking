@@ -33,12 +33,13 @@ object PageHtml {
             <!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
             <style>
-              html,body{margin:0;padding:16px;background:#fff;color:#1a1a1a;}
+              html{height:100%;}
+              html,body{margin:0;padding:16px;background:#fff;color:#1a1a1a;box-sizing:border-box;}
               body{
                 writing-mode:$writingMode;
                 font-family:"Noto Serif CJK JP",serif;
                 font-size:${fontSizePx}px; line-height:1.9;
-                ${if (vertical) "height:calc(100vh - 32px);overflow-x:auto;overflow-y:hidden;" else ""}
+                ${if (vertical) "height:100%;overflow-x:auto;overflow-y:hidden;" else ""}
               }
               rt{font-size:.5em;}
               $swatches

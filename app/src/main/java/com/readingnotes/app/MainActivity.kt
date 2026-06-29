@@ -2,6 +2,7 @@ package com.readingnotes.app
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -83,7 +84,13 @@ private fun VerticalAwareWebView(html: String, modifier: Modifier = Modifier) {
         modifier = modifier,
         factory = { ctx ->
             WebView(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
                 settings.javaScriptEnabled = false
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
             }
         },
         update = { web ->
