@@ -78,6 +78,8 @@ class GeminiOcrClient(
     class OcrException(message: String) : Exception(message)
 
     companion object {
+        const val DEFAULT_MODEL = "gemini-3-flash-preview"
+
         /** Strict prompt; mirrors the validated Spike 1 prompt. */
         val PROMPT = """
             あなたは日本語の縦書き書籍ページの厳密なOCRエンジンです。
