@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.util.AttributeSet
 import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -25,8 +27,35 @@ private class SelectionWebView : WebView {
     constructor(context: Context) : super(context)
     constructor(context: Context, attrs: AttributeSet?) : super(context, attrs)
 
-    override fun startActionMode(callback: ActionMode.Callback?): ActionMode? = null
-    override fun startActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? = null
+    // Keep the action mode alive (so the selection isn't immediately cleared)
+    // but strip every menu item, hiding the native copy/paste bar. Returning
+    // null here would make Android drop the selection right away.
+    override fun startActionMode(callback: ActionMode.Callback?): ActionMode? =
+        super.startActionMode(EmptyActionModeCallback(callback))
+
+    override fun startActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? =
+        super.startActionMode(EmptyActionModeCallback(callback), type)
+}
+
+private class EmptyActionModeCallback(
+    private val wrapped: ActionMode.Callback?,
+) : ActionMode.Callback {
+    override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
+        wrapped?.onCreateActionMode(mode, menu)
+        menu?.clear()
+        return true
+    }
+
+    override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean {
+        menu?.clear()
+        return true
+    }
+
+    override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+
+    override fun onDestroyActionMode(mode: ActionMode?) {
+        wrapped?.onDestroyActionMode(mode)
+    }
 }
 
 private class SelectionBridge(
