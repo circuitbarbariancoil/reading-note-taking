@@ -46,12 +46,15 @@ class BookRepository(
             val now = utcNow()
 
             val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+            val extractedPageNum = extractPageNumber(ocrText)
+            val pageNumber = extractedPageNum ?: nextPageNumber
             val page = Page(
-                page = nextPageNumber,
+                page = pageNumber,
                 archiveImage = archiveRelativePath,
                 ocrText = ocrText,
                 ocrModel = GeminiOcrClient.DEFAULT_MODEL,
                 ocrCapturedAt = now,
+                addedAt = now,
             )
             val updatedBook = book.copy(
                 updatedAt = now,
@@ -88,9 +91,124 @@ class BookRepository(
             .also { cachedBook = it }
     }
 
+    /** List all books on disk. */
+    fun listBooks(): List<Book> {
+        val booksRoot = File(context.filesDir, "books")
+        val children = booksRoot.listFiles()?.filter { it.isDirectory }.orEmpty()
+        return children.mapNotNull { dir ->
+            val jsonFile = File(dir, "book.json")
+            if (jsonFile.exists()) runCatching { BookStore.decode(jsonFile.readText()) }.getOrNull() else null
+        }
+    }
+
+    /** Load a specific book by uid. */
+    fun loadBook(uid: String): Book? {
+        val jsonFile = bookJsonFile(uid)
+        return if (jsonFile.exists()) runCatching { BookStore.decode(jsonFile.readText()) }.getOrNull() else null
+    }
+
+    /** Delete a book and all its data from disk. */
+    fun deleteBook(uid: String) {
+        bookDir(uid).deleteRecursively()
+        if (cachedBook?.uid == uid) cachedBook = null
+    }
+
+    /** Create a new empty book. */
+    fun createBook(title: String, author: String = ""): Book {
+        val uid = UUID.randomUUID().toString()
+        val now = utcNow()
+        val book = Book(
+            uid = uid,
+            title = title.ifBlank { "未命名" },
+            author = author,
+            createdAt = now,
+            updatedAt = now,
+            dropboxRoot = "/ReadingVault/books/$uid",
+        )
+        saveBook(book)
+        return book
+    }
+
+    /**
+     * Save a photo as a Capture (unprocessed) without running OCR.
+     * Returns the updated book with the new capture appended.
+     */
+    suspend fun saveCapture(
+        book: Book,
+        sourceBytes: ByteArray,
+    ): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val now = utcNow()
+            val captureId = UUID.randomUUID().toString()
+            val relativePath = "captures/${captureId}.webp"
+            val archiveWebp = ImageProcessing.toArchiveWebp(ImageProcessing.decode(sourceBytes))
+            saveArchiveImage(book.uid, relativePath, archiveWebp)
+
+            val capture = com.readingnotes.app.model.Capture(
+                id = captureId,
+                imagePath = archiveFile(book.uid, relativePath).absolutePath,
+                capturedAt = now,
+            )
+            val updated = book.copy(
+                updatedAt = now,
+                captures = book.captures + capture,
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
+    /**
+     * Process a capture: run OCR and convert it to a Page.
+     * If OCR extracts a page number it's used; otherwise returns null to signal
+     * that the user must provide one.
+     */
+    suspend fun processCapture(
+        book: Book,
+        capture: com.readingnotes.app.model.Capture,
+        geminiApiKey: String,
+        manualPageNumber: Int? = null,
+    ): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val now = utcNow()
+            val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(java.io.File(capture.imagePath).readBytes()))
+            val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+            val extracted = extractPageNumber(ocrText)
+            val pageNumber = manualPageNumber ?: extracted ?: (book.pages.maxOfOrNull { it.page }?.plus(1) ?: 1)
+
+            val archiveRelPath = "pages/p%04d_archive.webp".format(pageNumber)
+            // Copy capture image to pages dir
+            val src = java.io.File(capture.imagePath)
+            if (src.exists()) {
+                val dest = archiveFile(book.uid, archiveRelPath)
+                dest.parentFile?.mkdirs()
+                src.copyTo(dest, overwrite = true)
+            }
+
+            val page = Page(
+                page = pageNumber,
+                archiveImage = archiveRelPath,
+                ocrText = ocrText,
+                ocrModel = GeminiOcrClient.DEFAULT_MODEL,
+                ocrCapturedAt = now,
+                addedAt = now,
+            )
+            val updated = book.copy(
+                updatedAt = now,
+                pages = book.pages + page,
+                captures = book.captures.filterNot { it.id == capture.id },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /** Absolute local path of a page's archive image, or null if not present. */
     fun archiveImagePath(book: Book, page: Page): String? {
-        val file = archiveFile(book.uid, page.archiveImage)
+        val name = page.archiveImage ?: return null
+        val file = archiveFile(book.uid, name)
         return if (file.exists()) file.absolutePath else null
     }
 
@@ -164,4 +282,12 @@ class BookRepository(
     }
 
     private fun utcNow(): String = java.time.Instant.now().toString()
+
+    companion object {
+        private val PAGE_NUM_PATTERN = Regex("""\[非本文[：:]\s*[pP]?\.?(\d+)\s*]""")
+
+        /** Extracts page number from OCR output's [非本文: p.XX] tag, if present. */
+        fun extractPageNumber(ocrText: String): Int? =
+            PAGE_NUM_PATTERN.find(ocrText)?.groupValues?.get(1)?.toIntOrNull()
+    }
 }

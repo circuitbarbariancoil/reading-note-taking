@@ -7,14 +7,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,8 +27,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.readingnotes.app.model.Entry
 import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.ui.theme.Accent
@@ -75,64 +71,61 @@ fun EntryEditor(
         }.toString()
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    // Full-screen overlay instead of Dialog — Dialog creates a separate window
+    // that breaks IME focus for WebViews (keyboard won't appear).
+    Column(
+        modifier = Modifier.fillMaxSize().background(Paper),
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = Paper) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("‹", fontSize = 26.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDismiss).padding(end = 8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("条目", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi)
-                        Text("p.${entry.page}", fontSize = 12.sp, color = SumiSoft)
-                    }
-                    Text(
-                        "完成", fontSize = 15.sp, color = Accent,
-                        modifier = Modifier
-                            .clickable { webView?.evaluateJavascript("window.RN && RN.collect();", null) }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-                Spacer(modifier = Modifier.fillMaxWidth().padding(0.dp).background(Hairline))
-
-                AndroidView(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                            settings.javaScriptEnabled = true
-                            settings.allowFileAccess = true
-                            settings.domStorageEnabled = true
-                            val bridge = CollectBridge { excerpt, annotation, tags ->
-                                currentOnSave.value(
-                                    currentEntry.value.copy(
-                                        text = excerpt,
-                                        annotation = annotation,
-                                        tags = tags,
-                                        updatedAt = Instant.now().toString(),
-                                    ),
-                                )
-                            }
-                            addJavascriptInterface(bridge, "Android")
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView, url: String?) {
-                                    view.evaluateJavascript("window.RN.init(${JSONObject.quote(configJson)});", null)
-                                }
-                            }
-                            loadUrl("file:///android_asset/editor/index.html")
-                            webView = this
-                        }
-                    },
-                )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("‹", fontSize = 26.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDismiss).padding(end = 8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("条目", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi)
+                Text("p.${entry.page}", fontSize = 12.sp, color = SumiSoft)
             }
+            Text(
+                "完成", fontSize = 15.sp, color = Accent,
+                modifier = Modifier
+                    .clickable { webView?.evaluateJavascript("window.RN && RN.collect();", null) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
+        Spacer(modifier = Modifier.fillMaxWidth().padding(0.dp).background(Hairline))
+
+        AndroidView(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                    settings.javaScriptEnabled = true
+                    settings.allowFileAccess = true
+                    settings.domStorageEnabled = true
+                    val bridge = CollectBridge { excerpt, annotation, tags ->
+                        currentOnSave.value(
+                            currentEntry.value.copy(
+                                text = excerpt,
+                                annotation = annotation,
+                                tags = tags,
+                                updatedAt = Instant.now().toString(),
+                            ),
+                        )
+                    }
+                    addJavascriptInterface(bridge, "Android")
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String?) {
+                            view.evaluateJavascript("window.RN.init(${JSONObject.quote(configJson)});", null)
+                        }
+                    }
+                    loadUrl("file:///android_asset/editor/index.html")
+                    webView = this
+                }
+            },
+        )
     }
 }
 

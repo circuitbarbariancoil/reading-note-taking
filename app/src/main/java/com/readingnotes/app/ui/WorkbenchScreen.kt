@@ -69,6 +69,7 @@ fun WorkbenchScreen(
     repository: BookRepository,
     onBack: () -> Unit,
     onOpenPalette: () -> Unit,
+    onCapture: () -> Unit = {},
 ) {
     var book by remember { mutableStateOf(initialBook) }
     var pageIndex by remember { mutableStateOf(0) }
@@ -81,6 +82,11 @@ fun WorkbenchScreen(
 
     val scope = rememberCoroutineScope()
     val colors = remember(settings.palette) { settings.palette.asMap() }
+    val composeColors = remember(settings.palette) {
+        settings.palette.colors.associate { hc ->
+            hc.name to runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
+        }
+    }
 
     if (book.pages.isEmpty()) {
         EmptyState(onBack)
@@ -97,7 +103,7 @@ fun WorkbenchScreen(
 
     fun applyHighlight(color: String) {
         val sel = selection ?: return
-        val (hl, entry) = Entries.highlightEntry(page, sel.start, sel.end, color, Instant.now().toString())
+        val (hl, entry) = Entries.highlightEntry(page, sel.start, sel.end, color, Instant.now().toString()) ?: return
         val newPages = book.pages.map { if (it.page == page.page) it.copy(highlights = it.highlights + hl) else it }
         save(book.copy(pages = newPages, entries = book.entries + entry))
         selection = null
@@ -105,7 +111,7 @@ fun WorkbenchScreen(
 
     fun applyExcerpt() {
         val sel = selection ?: return
-        val entry = Entries.excerptEntry(page, sel.start, sel.end, Instant.now().toString())
+        val entry = Entries.excerptEntry(page, sel.start, sel.end, Instant.now().toString()) ?: return
         save(book.copy(entries = book.entries + entry))
         selection = null
     }
@@ -158,6 +164,7 @@ fun WorkbenchScreen(
                     onNext = { if (pageIndex < book.pages.lastIndex) { pageIndex++; selection = null } },
                     onToggleWriting = { vertical = !vertical },
                     onEntries = { drawerOpen = true },
+                    onCapture = onCapture,
                 )
             }
         }
@@ -183,6 +190,7 @@ fun WorkbenchScreen(
         ) {
             EntryList(
                 entries = pageEntries,
+                colorMap = composeColors,
                 onEdit = { editingEntryId = it.id },
                 onDelete = { target -> save(book.copy(entries = book.entries.filterNot { it.id == target.id })) },
             )
@@ -272,6 +280,7 @@ private fun PageBar(
     onNext: () -> Unit,
     onToggleWriting: () -> Unit,
     onEntries: () -> Unit,
+    onCapture: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -283,6 +292,7 @@ private fun PageBar(
         Spacer(Modifier.weight(1f))
         Text(if (vertical) "竖排" else "横排", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onToggleWriting).padding(8.dp))
         Text("条目 $entryCount", fontSize = 12.sp, color = Accent, modifier = Modifier.clickable(onClick = onEntries).padding(8.dp))
+        Text("＋", fontSize = 16.sp, color = Accent, modifier = Modifier.clickable(onClick = onCapture).padding(8.dp))
         TextButton(onClick = onNext) { Text("下一页 ›", fontSize = 13.sp, color = if (index < total - 1) Accent else Hairline) }
     }
 }
@@ -319,6 +329,7 @@ private fun SelectionBar(
 @Composable
 private fun EntryList(
     entries: List<Entry>,
+    colorMap: Map<String, Color>,
     onEdit: (Entry) -> Unit,
     onDelete: (Entry) -> Unit,
 ) {
@@ -331,13 +342,13 @@ private fun EntryList(
             Text("—", color = Hairline)
         }
         entries.forEach { entry ->
-            EntryCard(entry, onClick = { onEdit(entry) }, onDelete = { onDelete(entry) })
+            EntryCard(entry, colorMap, onClick = { onEdit(entry) }, onDelete = { onDelete(entry) })
         }
     }
 }
 
 @Composable
-private fun EntryCard(entry: Entry, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () -> Unit, onDelete: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -348,7 +359,7 @@ private fun EntryCard(entry: Entry, onClick: () -> Unit, onDelete: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            MarkupText.plain(entry.text),
+            MarkupText.rich(entry.text, colorMap),
             fontFamily = FontFamily.Serif, fontSize = 15.sp, color = Sumi,
         )
         if (entry.annotation.isNotBlank()) {

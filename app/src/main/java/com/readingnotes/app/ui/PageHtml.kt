@@ -29,11 +29,11 @@ object PageHtml {
         val writingMode = if (vertical) "vertical-rl" else "horizontal-tb"
         // Vertical (tategaki) 傍線 runs down the right edge of the column; only
         // horizontal text gets a bottom underline.
-        val hlBorder = if (vertical) "border-right" else "border-bottom"
+        val hlBorder = if (vertical) "border-left" else "border-bottom"
         val swatches = colors.entries.joinToString("\n") { (name, css) ->
             ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}"
         }
-        val body = buildBody(page.ocrText, page.highlights, colors)
+        val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors)
         val selectJs = if (interactive) SELECTION_JS else ""
         val userSelect = if (interactive) "text" else "none"
         return """

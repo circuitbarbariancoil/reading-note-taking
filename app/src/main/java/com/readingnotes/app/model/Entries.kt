@@ -44,11 +44,12 @@ object Entries {
         selEnd: Int,
         color: String,
         now: String,
-    ): Pair<PageHighlight, Entry> {
-        val sentence = expandToSentence(page.ocrText, selStart, selEnd)
+    ): Pair<PageHighlight, Entry>? {
+        val ocrText = page.ocrText ?: return null
+        val sentence = expandToSentence(ocrText, selStart, selEnd)
         val sStart = sentence.first
         val sEnd = sentence.last + 1
-        val sentenceText = CodePoints.substring(page.ocrText, sStart, sEnd)
+        val sentenceText = CodePoints.substring(ocrText, sStart, sEnd)
 
         val hlStartInSentence = (selStart - sStart).coerceIn(0, CodePoints.length(sentenceText))
         val hlEndInSentence = (selEnd - sStart).coerceIn(hlStartInSentence, CodePoints.length(sentenceText))
@@ -79,8 +80,9 @@ object Entries {
         selStart: Int,
         selEnd: Int,
         now: String,
-    ): Entry {
-        val text = CodePoints.substring(page.ocrText, selStart, selEnd)
+    ): Entry? {
+        val ocrText = page.ocrText ?: return null
+        val text = CodePoints.substring(ocrText, selStart, selEnd)
         return Entry(
             id = newId(),
             page = page.page,

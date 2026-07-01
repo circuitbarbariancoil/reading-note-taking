@@ -13,12 +13,14 @@ import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.android.Auth
 import com.dropbox.core.oauth.DbxCredential
 import com.readingnotes.app.dropbox.DropboxConfig
+import com.readingnotes.app.model.Book
 import com.readingnotes.app.repository.BookRepository
 import com.readingnotes.app.repository.CaptureResult
 import com.readingnotes.app.settings.AppSettings
 import com.readingnotes.app.settings.SettingsStore
+import com.readingnotes.app.ui.BookShelfScreen
 import com.readingnotes.app.ui.CaptureScreen
-import com.readingnotes.app.ui.HomeScreen
+import com.readingnotes.app.ui.PageListScreen
 import com.readingnotes.app.ui.PagePreviewScreen
 import com.readingnotes.app.ui.PaletteScreen
 import com.readingnotes.app.ui.SettingsScreen
@@ -26,7 +28,8 @@ import com.readingnotes.app.ui.WorkbenchScreen
 import com.readingnotes.app.ui.theme.ReadingNotesTheme
 
 private enum class ShellScreen {
-    Home,
+    BookShelf,
+    PageList,
     Capture,
     Settings,
     Preview,
@@ -39,8 +42,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var bookRepository: BookRepository
 
     private var appSettings by mutableStateOf(AppSettings())
-    private var currentScreen by mutableStateOf(ShellScreen.Home)
+    private var currentScreen by mutableStateOf(ShellScreen.BookShelf)
     private var captureResult by mutableStateOf<CaptureResult?>(null)
+    private var activeBook by mutableStateOf<Book?>(null)
+    private var activePageIndex by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,21 +57,52 @@ class MainActivity : ComponentActivity() {
             ReadingNotesTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     when (currentScreen) {
-                        ShellScreen.Home -> HomeScreen(
-                            settings = appSettings,
-                            onCapture = { currentScreen = ShellScreen.Capture },
-                            onWorkbench = { currentScreen = ShellScreen.Workbench },
+                        ShellScreen.BookShelf -> BookShelfScreen(
+                            books = bookRepository.listBooks(),
+                            repository = bookRepository,
+                            onOpenBook = { book ->
+                                activeBook = book
+                                currentScreen = ShellScreen.PageList
+                            },
                             onSettings = { currentScreen = ShellScreen.Settings },
-                            onPreview = { currentScreen = ShellScreen.Preview },
+                            onNewBook = { book ->
+                                activeBook = book
+                                currentScreen = ShellScreen.PageList
+                            },
                         )
+
+                        ShellScreen.PageList -> {
+                            val book = activeBook
+                            if (book == null) {
+                                currentScreen = ShellScreen.BookShelf
+                            } else {
+                                PageListScreen(
+                                    book = book,
+                                    repository = bookRepository,
+                                    onOpenPage = { page ->
+                                        activePageIndex = book.pages.indexOf(page).coerceAtLeast(0)
+                                        currentScreen = ShellScreen.Workbench
+                                    },
+                                    onCapture = { currentScreen = ShellScreen.Capture },
+                                    onBatchOcr = { /* TODO: batch OCR */ },
+                                    onBack = { currentScreen = ShellScreen.BookShelf },
+                                    onProcessCapture = { /* TODO: process single capture */ },
+                                )
+                            }
+                        }
 
                         ShellScreen.Capture -> CaptureScreen(
                             settings = appSettings,
                             repository = bookRepository,
                             lastResult = captureResult,
-                            onCaptureResult = { captureResult = it },
+                            onCaptureResult = { result ->
+                                captureResult = result
+                                activeBook = result.book
+                            },
                             onOpenSettings = { currentScreen = ShellScreen.Settings },
-                            onBack = { currentScreen = ShellScreen.Home },
+                            onBack = {
+                                currentScreen = if (activeBook != null) ShellScreen.PageList else ShellScreen.BookShelf
+                            },
                         )
 
                         ShellScreen.Settings -> SettingsScreen(
@@ -81,28 +117,23 @@ class MainActivity : ComponentActivity() {
                                 settingsStore.clearDropboxCredential()
                                 appSettings = settingsStore.read()
                             },
-                            onBack = { currentScreen = ShellScreen.Home },
+                            onBack = { currentScreen = ShellScreen.BookShelf },
                         )
 
                         ShellScreen.Preview -> PagePreviewScreen()
 
                         ShellScreen.Workbench -> {
-                            val book = bookRepository.loadCurrentBook()
+                            val book = activeBook ?: bookRepository.loadCurrentBook()
                             if (book == null) {
-                                HomeScreen(
-                                    settings = appSettings,
-                                    onCapture = { currentScreen = ShellScreen.Capture },
-                                    onWorkbench = { currentScreen = ShellScreen.Workbench },
-                                    onSettings = { currentScreen = ShellScreen.Settings },
-                                    onPreview = { currentScreen = ShellScreen.Preview },
-                                )
+                                currentScreen = ShellScreen.BookShelf
                             } else {
                                 WorkbenchScreen(
                                     initialBook = book,
                                     settings = appSettings,
                                     repository = bookRepository,
-                                    onBack = { currentScreen = ShellScreen.Home },
+                                    onBack = { currentScreen = ShellScreen.PageList },
                                     onOpenPalette = { currentScreen = ShellScreen.Palette },
+                                    onCapture = { currentScreen = ShellScreen.Capture },
                                 )
                             }
                         }

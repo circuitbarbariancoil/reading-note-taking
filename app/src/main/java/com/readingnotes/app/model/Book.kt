@@ -12,26 +12,43 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class Book(
-    val schema: Int = 1,
+    val schema: Int = 2,
     val uid: String,
     val title: String,
     val author: String = "",
     val isbn: String? = null,
-    val coverUrl: String? = null,
+    val coverPath: String? = null,
     val createdAt: String,
     val updatedAt: String,
     val dropboxRoot: String,
     val pages: List<Page> = emptyList(),
+    val captures: List<Capture> = emptyList(),
     val entries: List<Entry> = emptyList(),
 )
 
+/**
+ * An unprocessed photo: just an image, not yet a page (no OCR, no page number).
+ * Becomes a [Page] after OCR or manual page number assignment.
+ */
+@Serializable
+data class Capture(
+    val id: String,
+    val imagePath: String,
+    val capturedAt: String,
+)
+
+/**
+ * A processed page: has a page number (manual or OCR-extracted) and optionally
+ * OCR text. A page without ocrText can only display the archive image.
+ */
 @Serializable
 data class Page(
     val page: Int,
-    val archiveImage: String,
-    val ocrText: String,
+    val archiveImage: String? = null,
+    val ocrText: String? = null,
     val ocrModel: String? = null,
     val ocrCapturedAt: String? = null,
+    val addedAt: String = "",
     val proofread: Boolean = false,
     val highlights: List<PageHighlight> = emptyList(),
 )
