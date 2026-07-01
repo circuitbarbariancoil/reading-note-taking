@@ -76,7 +76,13 @@ fun PageWebView(
             }
         },
         update = { web ->
-            web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            // Only reload when the page content actually changes; reloading on
+            // every recomposition (e.g. a selection update) would wipe the
+            // active selection and make the action bar flicker away.
+            if (web.tag != html) {
+                web.tag = html
+                web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            }
         },
     )
 }
