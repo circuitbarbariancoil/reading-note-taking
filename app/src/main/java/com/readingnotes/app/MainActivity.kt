@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,13 +20,18 @@ import com.readingnotes.app.settings.SettingsStore
 import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.HomeScreen
 import com.readingnotes.app.ui.PagePreviewScreen
+import com.readingnotes.app.ui.PaletteScreen
 import com.readingnotes.app.ui.SettingsScreen
+import com.readingnotes.app.ui.WorkbenchScreen
+import com.readingnotes.app.ui.theme.ReadingNotesTheme
 
 private enum class ShellScreen {
     Home,
     Capture,
     Settings,
     Preview,
+    Workbench,
+    Palette,
 }
 
 class MainActivity : ComponentActivity() {
@@ -45,12 +49,13 @@ class MainActivity : ComponentActivity() {
         appSettings = settingsStore.read()
 
         setContent {
-            MaterialTheme {
+            ReadingNotesTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     when (currentScreen) {
                         ShellScreen.Home -> HomeScreen(
                             settings = appSettings,
                             onCapture = { currentScreen = ShellScreen.Capture },
+                            onWorkbench = { currentScreen = ShellScreen.Workbench },
                             onSettings = { currentScreen = ShellScreen.Settings },
                             onPreview = { currentScreen = ShellScreen.Preview },
                         )
@@ -80,6 +85,36 @@ class MainActivity : ComponentActivity() {
                         )
 
                         ShellScreen.Preview -> PagePreviewScreen()
+
+                        ShellScreen.Workbench -> {
+                            val book = bookRepository.loadCurrentBook()
+                            if (book == null) {
+                                HomeScreen(
+                                    settings = appSettings,
+                                    onCapture = { currentScreen = ShellScreen.Capture },
+                                    onWorkbench = { currentScreen = ShellScreen.Workbench },
+                                    onSettings = { currentScreen = ShellScreen.Settings },
+                                    onPreview = { currentScreen = ShellScreen.Preview },
+                                )
+                            } else {
+                                WorkbenchScreen(
+                                    initialBook = book,
+                                    settings = appSettings,
+                                    repository = bookRepository,
+                                    onBack = { currentScreen = ShellScreen.Home },
+                                    onOpenPalette = { currentScreen = ShellScreen.Palette },
+                                )
+                            }
+                        }
+
+                        ShellScreen.Palette -> PaletteScreen(
+                            palette = appSettings.palette,
+                            onSave = {
+                                settingsStore.savePalette(it)
+                                appSettings = settingsStore.read()
+                            },
+                            onBack = { currentScreen = ShellScreen.Workbench },
+                        )
                     }
                 }
             }

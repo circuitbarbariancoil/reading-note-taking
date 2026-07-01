@@ -4,11 +4,14 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.readingnotes.app.model.HighlightPalette
+import kotlinx.serialization.json.Json
 
 data class AppSettings(
     val geminiApiKey: String? = null,
     val dropboxCredentialJson: String? = null,
     val bookTitle: String = DEFAULT_BOOK_TITLE,
+    val palette: HighlightPalette = HighlightPalette.DEFAULT,
 ) {
     val hasGeminiKey: Boolean get() = !geminiApiKey.isNullOrBlank()
     val hasDropboxCredential: Boolean get() = !dropboxCredentialJson.isNullOrBlank()
@@ -35,7 +38,20 @@ class SettingsStore(context: Context) {
         bookTitle = prefs.getString(KEY_BOOK_TITLE, AppSettings.DEFAULT_BOOK_TITLE)
             .orEmpty()
             .ifBlank { AppSettings.DEFAULT_BOOK_TITLE },
+        palette = readPalette(),
     )
+
+    private fun readPalette(): HighlightPalette {
+        val raw = prefs.getString(KEY_HIGHLIGHT_PALETTE, null) ?: return HighlightPalette.DEFAULT
+        return runCatching { json.decodeFromString(HighlightPalette.serializer(), raw) }
+            .getOrDefault(HighlightPalette.DEFAULT)
+    }
+
+    fun savePalette(palette: HighlightPalette) {
+        prefs.edit()
+            .putString(KEY_HIGHLIGHT_PALETTE, json.encodeToString(HighlightPalette.serializer(), palette))
+            .apply()
+    }
 
     fun saveGeminiApiKey(value: String) {
         val trimmed = value.trim()
@@ -61,9 +77,11 @@ class SettingsStore(context: Context) {
     }
 
     companion object {
+        private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private const val PREFS_NAME = "secure_settings"
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
         private const val KEY_DROPBOX_CREDENTIAL_JSON = "dropbox_credential_json"
         private const val KEY_BOOK_TITLE = "book_title"
+        private const val KEY_HIGHLIGHT_PALETTE = "highlight_palette"
     }
 }

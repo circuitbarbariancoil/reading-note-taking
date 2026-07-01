@@ -88,6 +88,35 @@ class BookRepository(
             .also { cachedBook = it }
     }
 
+    /** Absolute local path of a page's archive image, or null if not present. */
+    fun archiveImagePath(book: Book, page: Page): String? {
+        val file = archiveFile(book.uid, page.archiveImage)
+        return if (file.exists()) file.absolutePath else null
+    }
+
+    /**
+     * Persist an edited [book]: writes book.json locally and, when a Dropbox
+     * credential is available, uploads book.json (one-way app -> Dropbox).
+     */
+    suspend fun persist(book: Book, dropboxCredentialJson: String?): Book =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val stamped = book.copy(updatedAt = utcNow())
+                saveBook(stamped)
+                cachedBook = stamped
+                if (!dropboxCredentialJson.isNullOrBlank()) {
+                    runCatching {
+                        val client = DropboxClient.fromCredentialJson(dropboxCredentialJson)
+                        client.uploadFile(
+                            "${stamped.dropboxRoot}/book.json",
+                            BookStore.encode(stamped).toByteArray(Charsets.UTF_8),
+                        )
+                    }
+                }
+                stamped
+            }
+        }
+
     private fun loadOrCreateBook(title: String): Book {
         cachedBook?.let { return it }
         val existingFile = findExistingBookJson()
