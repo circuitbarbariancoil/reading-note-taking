@@ -12,8 +12,8 @@ android {
         applicationId = "com.readingnotes.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -23,6 +23,16 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            val suffix = project.findProperty("apkSuffix")?.toString() ?: ""
+            val tag = if (suffix.isNotEmpty()) "-$suffix" else ""
+            output.outputFileName = "reading-notes-${variant.versionName}${tag}-${variant.buildType.name}.apk"
         }
     }
 
