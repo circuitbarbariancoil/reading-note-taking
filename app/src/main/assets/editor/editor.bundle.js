@@ -28376,6 +28376,86 @@
 
   let excerptView = null;
   let annotationView = null;
+  let focusedView = null;
+
+  function trackFocus(view) {
+    view.contentDOM.addEventListener("focus", () => {
+      focusedView = view;
+    });
+  }
+
+  function target() {
+    return focusedView || excerptView;
+  }
+
+  // Wrap the selection (or insert an empty pair and place the caret inside).
+  function wrapSelection(view, before, after) {
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    view.dispatch({
+      changes: [
+        { from, insert: before },
+        { from: to, insert: after },
+      ],
+      selection:
+        from === to
+          ? { anchor: from + before.length }
+          : { anchor: from + before.length, head: to + before.length },
+    });
+    view.focus();
+  }
+
+  function insertText(view, text, caretOffset) {
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + (text.length) },
+    });
+    view.focus();
+  }
+
+  function chip(label, style, onTap) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "tb-chip";
+    el.textContent = label;
+    if (style) el.setAttribute("style", style);
+    // mousedown/touchstart preventDefault keeps the editor focused (IME stays up).
+    const stop = (e) => e.preventDefault();
+    el.addEventListener("mousedown", stop);
+    el.addEventListener("touchstart", stop, { passive: false });
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      onTap();
+    });
+    return el;
+  }
+
+  function buildToolbar() {
+    const bar = document.getElementById("toolbar");
+    if (!bar) return;
+    bar.innerHTML = "";
+
+    for (const p of PALETTE) {
+      bar.appendChild(
+        chip(
+          p.name,
+          `background:${p.css}22;border-color:${p.css};color:#211E1A;`,
+          () => wrapSelection(target(), `~={${p.name}}`, "=~")
+        )
+      );
+    }
+    bar.appendChild(chip("《》", "", () => wrapSelection(target(), "《", "》")));
+    bar.appendChild(chip("B", "font-weight:700;", () => wrapSelection(target(), "**", "**")));
+    bar.appendChild(
+      chip("#", "", () => {
+        const view = target();
+        insertText(view, "#");
+        startCompletion(view);
+      })
+    );
+  }
 
   window.RN = {
     init(configJson) {
@@ -28386,6 +28466,10 @@
       document.getElementById("annotation").innerHTML = "";
       excerptView = makeEditor(document.getElementById("excerpt"), cfg.excerpt || "", "jp");
       annotationView = makeEditor(document.getElementById("annotation"), cfg.annotation || "", "md");
+      trackFocus(excerptView);
+      trackFocus(annotationView);
+      focusedView = excerptView;
+      buildToolbar();
     },
     collect() {
       const excerpt = excerptView ? excerptView.state.doc.toString() : "";

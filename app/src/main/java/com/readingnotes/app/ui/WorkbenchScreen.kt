@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +58,7 @@ import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -70,9 +73,12 @@ fun WorkbenchScreen(
     onBack: () -> Unit,
     onOpenPalette: () -> Unit,
     onCapture: () -> Unit = {},
+    initialPageIndex: Int = 0,
+    ocrBusy: Boolean = false,
+    onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
 ) {
-    var book by remember { mutableStateOf(initialBook) }
-    var pageIndex by remember { mutableStateOf(0) }
+    var book by remember(initialBook) { mutableStateOf(initialBook) }
+    var pageIndex by remember(initialBook, initialPageIndex) { mutableStateOf(initialPageIndex) }
     var mode by remember { mutableStateOf(MainMode.Text) }
     var vertical by remember { mutableStateOf(true) }
     var toolbarCollapsed by remember { mutableStateOf(false) }
@@ -89,7 +95,7 @@ fun WorkbenchScreen(
     }
 
     if (book.pages.isEmpty()) {
-        EmptyState(onBack)
+        EmptyState(onBack, onCapture, ocrBusy)
         return
     }
 
@@ -132,8 +138,13 @@ fun WorkbenchScreen(
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                when (mode) {
-                    MainMode.Text -> PageWebView(
+                when {
+                    mode == MainMode.Text && page.ocrText == null -> NotOcrYet(
+                        imagePath = repository.archiveImagePath(book, page),
+                        onOcr = { onOcrPage(page) },
+                        ocrBusy = ocrBusy,
+                    )
+                    mode == MainMode.Text -> PageWebView(
                         page = page,
                         colors = colors,
                         vertical = vertical,
@@ -141,7 +152,11 @@ fun WorkbenchScreen(
                         onSelectionChange = { selection = it },
                         modifier = Modifier.fillMaxSize(),
                     )
-                    MainMode.Image -> PageImage(repository.archiveImagePath(book, page))
+                    else -> PageImage(repository.archiveImagePath(book, page))
+                }
+
+                if (ocrBusy) {
+                    OcrBusyIndicator(modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
                 }
 
                 if (toolbarCollapsed) {
@@ -384,6 +399,51 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
     }
 }
 
+/** Compact non-blocking OCR status: spinner + elapsed seconds. */
+@Composable
+private fun OcrBusyIndicator(modifier: Modifier = Modifier) {
+    var seconds by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            seconds++
+        }
+    }
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.9f))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
+        Text("识别中 ${seconds}s", fontSize = 11.sp, color = SumiSoft)
+    }
+}
+
+/** Page that only has a page number: show the photo and offer OCR. */
+@Composable
+private fun NotOcrYet(imagePath: String?, onOcr: () -> Unit, ocrBusy: Boolean) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        PageImage(imagePath)
+        if (!ocrBusy) {
+            Text(
+                "此页尚未识别文字 · 点击 OCR",
+                fontSize = 13.sp,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 20.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Accent)
+                    .clickable(onClick = onOcr)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun PageImage(path: String?) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -397,12 +457,27 @@ private fun PageImage(path: String?) {
 }
 
 @Composable
-private fun EmptyState(onBack: () -> Unit) {
+private fun EmptyState(onBack: () -> Unit, onCapture: () -> Unit, ocrBusy: Boolean) {
     Column(
         modifier = Modifier.fillMaxSize().background(Paper).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("‹ 返回", fontSize = 15.sp, color = Accent, modifier = Modifier.clickable(onClick = onBack))
-        Text("还没有页面。先去拍照采集一页。", color = SumiSoft)
+        if (ocrBusy) {
+            OcrBusyIndicator()
+            Text("刚拍的页正在识别，完成后自动显示。", color = SumiSoft)
+        } else {
+            Text("还没有页面。先拍一页开始。", color = SumiSoft)
+            Text(
+                "＋ 拍照",
+                fontSize = 14.sp,
+                color = Color.White,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Accent)
+                    .clickable(onClick = onCapture)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
     }
 }

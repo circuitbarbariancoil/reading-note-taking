@@ -14,6 +14,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
+/** Result of processing a capture into a page. */
+sealed class ProcessOutcome {
+    data class Done(val book: Book, val page: Page) : ProcessOutcome()
+
+    /** OCR ran but no page number could be extracted; the user must supply one. */
+    data class NeedsPageNumber(val ocrText: String) : ProcessOutcome()
+}
+
 data class CaptureResult(
     val book: Book,
     val page: Page,
@@ -160,49 +168,134 @@ class BookRepository(
     }
 
     /**
-     * Process a capture: run OCR and convert it to a Page.
-     * If OCR extracts a page number it's used; otherwise returns null to signal
-     * that the user must provide one.
+     * Process a capture: run OCR (unless [precomputedOcrText] is supplied) and
+     * convert it to a Page. Page number priority: manual > OCR-extracted. When
+     * neither is available the book is left untouched and
+     * [ProcessOutcome.NeedsPageNumber] carries the OCR text so the caller can
+     * ask the user and retry without paying for OCR again.
      */
     suspend fun processCapture(
         book: Book,
         capture: com.readingnotes.app.model.Capture,
         geminiApiKey: String,
         manualPageNumber: Int? = null,
+        precomputedOcrText: String? = null,
+    ): ProcessOutcome = withContext(Dispatchers.IO) {
+        val ocrText = precomputedOcrText ?: run {
+            val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(capture.imagePath).readBytes()))
+            GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+        }
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val now = utcNow()
+            val pageNumber = manualPageNumber ?: extractPageNumber(ocrText)
+                ?: return@withLock ProcessOutcome.NeedsPageNumber(ocrText)
+
+            val page = buildPageFromCapture(base, capture, pageNumber, now, ocrText)
+            val updated = base.copy(
+                updatedAt = now,
+                pages = (base.pages + page).sortedBy { it.page },
+                captures = base.captures.filterNot { it.id == capture.id },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            ProcessOutcome.Done(updated, page)
+        }
+    }
+
+    /**
+     * Turn a capture into a page with just a page number, no OCR. The page can
+     * be OCR'd later via [ocrExistingPage].
+     */
+    suspend fun assignPageNumber(
+        book: Book,
+        capture: com.readingnotes.app.model.Capture,
+        pageNumber: Int,
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val base = loadBook(book.uid) ?: book
             val now = utcNow()
-            val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(java.io.File(capture.imagePath).readBytes()))
-            val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
-            val extracted = extractPageNumber(ocrText)
-            val pageNumber = manualPageNumber ?: extracted ?: (book.pages.maxOfOrNull { it.page }?.plus(1) ?: 1)
-
-            val archiveRelPath = "pages/p%04d_archive.webp".format(pageNumber)
-            // Copy capture image to pages dir
-            val src = java.io.File(capture.imagePath)
-            if (src.exists()) {
-                val dest = archiveFile(book.uid, archiveRelPath)
-                dest.parentFile?.mkdirs()
-                src.copyTo(dest, overwrite = true)
-            }
-
-            val page = Page(
-                page = pageNumber,
-                archiveImage = archiveRelPath,
-                ocrText = ocrText,
-                ocrModel = GeminiOcrClient.DEFAULT_MODEL,
-                ocrCapturedAt = now,
-                addedAt = now,
-            )
-            val updated = book.copy(
+            val page = buildPageFromCapture(base, capture, pageNumber, now, ocrText = null)
+            val updated = base.copy(
                 updatedAt = now,
-                pages = book.pages + page,
-                captures = book.captures.filterNot { it.id == capture.id },
+                pages = (base.pages + page).sortedBy { it.page },
+                captures = base.captures.filterNot { it.id == capture.id },
             )
             saveBook(updated)
             cachedBook = updated
             updated
         }
+    }
+
+    /** Run OCR on an existing page's archive image, keeping its page number. */
+    suspend fun ocrExistingPage(
+        book: Book,
+        page: Page,
+        geminiApiKey: String,
+    ): Book = withContext(Dispatchers.IO) {
+        val imagePath = archiveImagePath(book, page)
+            ?: throw IllegalStateException("此页没有原始图片，无法 OCR")
+        val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(imagePath).readBytes()))
+        val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val now = utcNow()
+            val updated = base.copy(
+                updatedAt = now,
+                pages = base.pages.map {
+                    if (it.page == page.page && it.addedAt == page.addedAt) {
+                        it.copy(ocrText = ocrText, ocrModel = GeminiOcrClient.DEFAULT_MODEL, ocrCapturedAt = now)
+                    } else {
+                        it
+                    }
+                },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
+    /** Delete an unprocessed capture (photo) and its image file. */
+    suspend fun deleteCapture(
+        book: Book,
+        capture: com.readingnotes.app.model.Capture,
+    ): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            runCatching { File(capture.imagePath).delete() }
+            val base = loadBook(book.uid) ?: book
+            val updated = base.copy(
+                updatedAt = utcNow(),
+                captures = base.captures.filterNot { it.id == capture.id },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
+    private fun buildPageFromCapture(
+        book: Book,
+        capture: com.readingnotes.app.model.Capture,
+        pageNumber: Int,
+        now: String,
+        ocrText: String?,
+    ): Page {
+        val archiveRelPath = "pages/p%04d_archive.webp".format(pageNumber)
+        val src = File(capture.imagePath)
+        if (src.exists()) {
+            val dest = archiveFile(book.uid, archiveRelPath)
+            dest.parentFile?.mkdirs()
+            src.copyTo(dest, overwrite = true)
+        }
+        return Page(
+            page = pageNumber,
+            archiveImage = archiveRelPath,
+            ocrText = ocrText,
+            ocrModel = ocrText?.let { GeminiOcrClient.DEFAULT_MODEL },
+            ocrCapturedAt = ocrText?.let { now },
+            addedAt = now,
+        )
     }
 
     /** Absolute local path of a page's archive image, or null if not present. */

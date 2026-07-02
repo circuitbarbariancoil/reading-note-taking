@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,15 +54,21 @@ import com.readingnotes.app.ui.theme.SumiSoft
 
 enum class PageSortMode { ByOrder, ByPageNumber }
 
+/** UI state of a background OCR job. */
+enum class OcrJobState { Running, Failed }
+
 @Composable
 fun PageListScreen(
     book: Book,
     repository: BookRepository,
+    ocrStatus: Map<String, OcrJobState>,
     onOpenPage: (Page) -> Unit,
     onCapture: () -> Unit,
     onBatchOcr: () -> Unit,
     onBack: () -> Unit,
-    onProcessCapture: (Capture) -> Unit,
+    onOcrCapture: (Capture) -> Unit,
+    onAssignPage: (Capture, Int) -> Unit,
+    onDeleteCapture: (Capture) -> Unit,
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
     var assignPageDialog by remember { mutableStateOf<Capture?>(null) }
@@ -134,6 +141,7 @@ fun PageListScreen(
 
                 // Unprocessed captures section
                 if (book.captures.isNotEmpty()) {
+                    val runningCount = book.captures.count { ocrStatus[it.id] == OcrJobState.Running }
                     item(span = { GridItemSpan(3) }) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -141,19 +149,37 @@ fun PageListScreen(
                         ) {
                             Text("未处理", fontSize = 12.sp, color = SumiSoft)
                             Spacer(Modifier.weight(1f))
-                            Text(
-                                "全部 OCR",
-                                fontSize = 12.sp,
-                                color = Accent,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable(onClick = onBatchOcr)
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                            )
+                            if (runningCount > 0) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = Accent,
+                                )
+                                Text(
+                                    "OCR 中 剩 ${book.captures.size} 张",
+                                    fontSize = 12.sp,
+                                    color = Accent,
+                                    modifier = Modifier.padding(start = 6.dp, end = 4.dp),
+                                )
+                            } else {
+                                Text(
+                                    "全部 OCR",
+                                    fontSize = 12.sp,
+                                    color = Accent,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(onClick = onBatchOcr)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                     }
                     items(book.captures, key = { "cap-${it.id}" }) { capture ->
-                        CaptureThumbnail(capture, onClick = { assignPageDialog = capture })
+                        CaptureThumbnail(
+                            capture = capture,
+                            state = ocrStatus[capture.id],
+                            onClick = { if (ocrStatus[capture.id] != OcrJobState.Running) assignPageDialog = capture },
+                        )
                     }
                 }
             }
@@ -181,15 +207,19 @@ fun PageListScreen(
 
     assignPageDialog?.let { capture ->
         AssignPageDialog(
-            capture = capture,
+            failed = ocrStatus[capture.id] == OcrJobState.Failed,
             onDismiss = { assignPageDialog = null },
             onAssign = { pageNumber ->
                 assignPageDialog = null
-                onProcessCapture(capture)
+                onAssignPage(capture, pageNumber)
             },
             onOcr = {
                 assignPageDialog = null
-                onProcessCapture(capture)
+                onOcrCapture(capture)
+            },
+            onDelete = {
+                assignPageDialog = null
+                onDeleteCapture(capture)
             },
         )
     }
@@ -250,7 +280,7 @@ private fun PageThumbnail(page: Page, book: Book, repository: BookRepository, on
 }
 
 @Composable
-private fun CaptureThumbnail(capture: Capture, onClick: () -> Unit) {
+private fun CaptureThumbnail(capture: Capture, state: OcrJobState?, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -274,11 +304,36 @@ private fun CaptureThumbnail(capture: Capture, onClick: () -> Unit) {
             bitmap?.let {
                 Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } ?: Text("?", fontSize = 18.sp, color = SumiSoft)
+
+            when (state) {
+                OcrJobState.Running -> Box(
+                    modifier = Modifier.fillMaxSize().background(Color(0x66000000)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White,
+                    )
+                }
+                OcrJobState.Failed -> Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFB3524A)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("!", fontSize = 10.sp, color = Color.White)
+                }
+                null -> Unit
+            }
         }
         Text(
-            capture.capturedAt.take(10),
+            if (state == OcrJobState.Failed) "OCR 失败，点击重试" else capture.capturedAt.take(10),
             fontSize = 9.sp,
-            color = SumiSoft,
+            color = if (state == OcrJobState.Failed) Color(0xFFB3524A) else SumiSoft,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 3.dp),
         )
@@ -287,10 +342,11 @@ private fun CaptureThumbnail(capture: Capture, onClick: () -> Unit) {
 
 @Composable
 private fun AssignPageDialog(
-    capture: Capture,
+    failed: Boolean,
     onDismiss: () -> Unit,
     onAssign: (Int) -> Unit,
     onOcr: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var pageNumText by remember { mutableStateOf("") }
 
@@ -299,7 +355,10 @@ private fun AssignPageDialog(
         title = { Text("处理照片") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("选择操作：", fontSize = 13.sp, color = SumiSoft)
+                if (failed) {
+                    Text("上次 OCR 失败，可重试。", fontSize = 13.sp, color = Color(0xFFB3524A))
+                }
+                Text("OCR 识别文字，或只填页码先占位（回头再 OCR）：", fontSize = 13.sp, color = SumiSoft)
                 OutlinedTextField(
                     value = pageNumText,
                     onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
@@ -310,7 +369,7 @@ private fun AssignPageDialog(
         },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onOcr) { Text("OCR") }
+                TextButton(onClick = onOcr) { Text(if (failed) "重试 OCR" else "OCR") }
                 TextButton(
                     onClick = { pageNumText.toIntOrNull()?.let { onAssign(it) } },
                     enabled = pageNumText.toIntOrNull() != null,
@@ -318,7 +377,10 @@ private fun AssignPageDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onDelete) { Text("删除", color = Color(0xFFB3524A)) }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
         },
     )
 }
