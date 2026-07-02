@@ -131,6 +131,9 @@ class MainActivity : ComponentActivity() {
                         onBack = { currentScreen = ShellScreen.BookShelf },
                         onOcrCapture = { capture -> ocrCapture(capture, jumpToPage = false) },
                         onAssignPage = { capture, pageNumber -> assignPage(capture, pageNumber) },
+                        onFillPageNumber = { capture ->
+                            capture.ocrText?.let { pendingPageNumber = PendingPageNumber(capture, it) }
+                        },
                         onDeleteCapture = { capture -> deleteCapture(capture) },
                     )
                 }
@@ -186,6 +189,7 @@ class MainActivity : ComponentActivity() {
                         onOpenPalette = { currentScreen = ShellScreen.Palette },
                         onCapture = { openCapture(fromWorkbench = true) },
                         onOcrPage = { page -> ocrPage(page) },
+                        onChangePageNumber = { page, newNumber -> changePageNumber(page, newNumber) },
                     )
                 }
             }
@@ -250,7 +254,7 @@ class MainActivity : ComponentActivity() {
         }
         ocrStatus[capture.id] = OcrJobState.Running
         try {
-            when (val outcome = bookRepository.processCapture(book, capture, key)) {
+            when (val outcome = bookRepository.processCapture(book, capture, key, precomputedOcrText = capture.ocrText)) {
                 is ProcessOutcome.Done -> {
                     ocrStatus.remove(capture.id)
                     activeBook = outcome.book
@@ -264,6 +268,8 @@ class MainActivity : ComponentActivity() {
 
                 is ProcessOutcome.NeedsPageNumber -> {
                     ocrStatus.remove(capture.id)
+                    // Keep the recognized text so 稍后处理 doesn't lose or re-bill it.
+                    activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
                     pendingPageNumber = PendingPageNumber(capture, outcome.ocrText)
                 }
             }
@@ -297,10 +303,12 @@ class MainActivity : ComponentActivity() {
     private fun batchOcr() {
         lifecycleScope.launch {
             // Sequential: one Gemini call at a time; statuses drive the UI badges.
+            val attempted = mutableSetOf<String>()
             while (true) {
-                val next = activeBook?.captures?.firstOrNull { ocrStatus[it.id] != OcrJobState.Failed }
-                    ?: break
-                if (pendingPageNumber != null) break
+                val next = activeBook?.captures?.firstOrNull {
+                    it.ocrText == null && it.id !in attempted && ocrStatus[it.id] != OcrJobState.Failed
+                } ?: break
+                attempted.add(next.id)
                 runOcrCapture(next, jumpToPage = false)
                 if (ocrStatus[next.id] == OcrJobState.Failed) break
             }
@@ -310,7 +318,31 @@ class MainActivity : ComponentActivity() {
     private fun assignPage(capture: Capture, pageNumber: Int) {
         val book = activeBook ?: return
         lifecycleScope.launch {
-            val updated = bookRepository.assignPageNumber(book, capture, pageNumber)
+            val ocrText = capture.ocrText
+            val updated = if (ocrText != null) {
+                val outcome = bookRepository.processCapture(
+                    book,
+                    capture,
+                    appSettings.geminiApiKey.orEmpty(),
+                    manualPageNumber = pageNumber,
+                    precomputedOcrText = ocrText,
+                )
+                (outcome as ProcessOutcome.Done).book
+            } else {
+                bookRepository.assignPageNumber(book, capture, pageNumber)
+            }
+            activeBook = updated
+            syncToDropbox(updated)
+        }
+    }
+
+    private fun changePageNumber(page: Page, newNumber: Int) {
+        val book = activeBook ?: return
+        lifecycleScope.launch {
+            val updated = bookRepository.changePageNumber(book, page, newNumber)
+            activePageIndex = updated.pages
+                .indexOfFirst { it.page == newNumber && it.addedAt == page.addedAt }
+                .coerceAtLeast(0)
             activeBook = updated
             syncToDropbox(updated)
         }

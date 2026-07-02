@@ -76,6 +76,7 @@ fun WorkbenchScreen(
     initialPageIndex: Int = 0,
     ocrBusy: Boolean = false,
     onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
+    onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
 ) {
     var book by remember(initialBook) { mutableStateOf(initialBook) }
     var pageIndex by remember(initialBook, initialPageIndex) { mutableStateOf(initialPageIndex) }
@@ -85,6 +86,7 @@ fun WorkbenchScreen(
     var selection by remember { mutableStateOf<Selection?>(null) }
     var drawerOpen by remember { mutableStateOf(false) }
     var editingEntryId by remember { mutableStateOf<String?>(null) }
+    var pageMenuOpen by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val colors = remember(settings.palette) { settings.palette.asMap() }
@@ -134,6 +136,7 @@ fun WorkbenchScreen(
                     onCollapse = { toolbarCollapsed = true },
                     onSettings = onOpenPalette,
                     onBack = onBack,
+                    onPageMenu = { pageMenuOpen = true },
                 )
             }
 
@@ -212,6 +215,22 @@ fun WorkbenchScreen(
         }
     }
 
+    if (pageMenuOpen) {
+        PageMenuDialog(
+            page = page,
+            ocrBusy = ocrBusy,
+            onDismiss = { pageMenuOpen = false },
+            onChangePageNumber = { newNumber ->
+                pageMenuOpen = false
+                onChangePageNumber(page, newNumber)
+            },
+            onReOcr = {
+                pageMenuOpen = false
+                onOcrPage(page)
+            },
+        )
+    }
+
     editingEntryId?.let { id ->
         book.entries.firstOrNull { it.id == id }?.let { entry ->
             EntryEditor(
@@ -238,6 +257,7 @@ private fun TopBar(
     onCollapse: () -> Unit,
     onSettings: () -> Unit,
     onBack: () -> Unit,
+    onPageMenu: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -253,6 +273,7 @@ private fun TopBar(
         }
         ModeToggle(mode, onMode)
         Spacer(Modifier.width(6.dp))
+        IconButton(onClick = onPageMenu) { Text("⋯", fontSize = 17.sp, color = SumiSoft) }
         IconButton(onClick = onCollapse) { Text("⤢", fontSize = 17.sp, color = SumiSoft) }
         IconButton(onClick = onSettings) { Text("⚙", fontSize = 17.sp, color = SumiSoft) }
     }
@@ -397,6 +418,51 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
             Text("删除", fontSize = 11.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDelete).padding(4.dp))
         }
     }
+}
+
+/** Per-page actions: change the page number or re-run OCR. */
+@Composable
+private fun PageMenuDialog(
+    page: com.readingnotes.app.model.Page,
+    ocrBusy: Boolean,
+    onDismiss: () -> Unit,
+    onChangePageNumber: (Int) -> Unit,
+    onReOcr: () -> Unit,
+) {
+    var pageNumText by remember { mutableStateOf(page.page.toString()) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("页面 p.${page.page}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = pageNumText,
+                    onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
+                    label = { Text("页码") },
+                    singleLine = true,
+                )
+                Text(
+                    if (page.ocrText == null) "此页尚未 OCR。" else "重新 OCR 会覆盖已识别的文字。",
+                    fontSize = 12.sp,
+                    color = SumiSoft,
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onReOcr, enabled = !ocrBusy) {
+                    Text(if (page.ocrText == null) "OCR" else "重新 OCR")
+                }
+                TextButton(
+                    onClick = { pageNumText.toIntOrNull()?.let(onChangePageNumber) },
+                    enabled = pageNumText.toIntOrNull()?.let { it != page.page } == true,
+                ) { Text("保存页码") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 /** Compact non-blocking OCR status: spinner + elapsed seconds. */

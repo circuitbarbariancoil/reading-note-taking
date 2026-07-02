@@ -52,7 +52,7 @@ object PageHtml {
               rt{font-size:.5em;}
               ::selection{background:#3C546840;}
               $swatches
-            </style></head><body>$body$selectJs</body></html>
+            </style></head><body>$body$SCROLL_TO_START_JS$selectJs</body></html>
         """.trimIndent()
     }
 
@@ -130,6 +130,19 @@ object PageHtml {
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
+
+    /**
+     * Scrolls to the text start once loaded: the right edge for vertical-rl,
+     * the top for horizontal.
+     */
+    private val SCROLL_TO_START_JS = """
+        <script>
+          window.addEventListener('load', function(){
+            var first = document.querySelector('[data-s]');
+            if(first) first.scrollIntoView({inline:'start', block:'start'});
+          });
+        </script>
+    """.trimIndent()
 
     /** Reports the current selection as code-point offsets to the Kotlin bridge. */
     private val SELECTION_JS = """

@@ -28415,47 +28415,6 @@
     view.focus();
   }
 
-  function chip(label, style, onTap) {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "tb-chip";
-    el.textContent = label;
-    if (style) el.setAttribute("style", style);
-    // mousedown/touchstart preventDefault keeps the editor focused (IME stays up).
-    const stop = (e) => e.preventDefault();
-    el.addEventListener("mousedown", stop);
-    el.addEventListener("touchstart", stop, { passive: false });
-    el.addEventListener("click", (e) => {
-      e.preventDefault();
-      onTap();
-    });
-    return el;
-  }
-
-  function buildToolbar() {
-    const bar = document.getElementById("toolbar");
-    if (!bar) return;
-    bar.innerHTML = "";
-
-    for (const p of PALETTE) {
-      bar.appendChild(
-        chip(
-          p.name,
-          `background:${p.css}22;border-color:${p.css};color:#211E1A;`,
-          () => wrapSelection(target(), `~={${p.name}}`, "=~")
-        )
-      );
-    }
-    bar.appendChild(chip("《》", "", () => wrapSelection(target(), "《", "》")));
-    bar.appendChild(chip("B", "font-weight:700;", () => wrapSelection(target(), "**", "**")));
-    bar.appendChild(
-      chip("#", "", () => {
-        const view = target();
-        insertText(view, "#");
-        startCompletion(view);
-      })
-    );
-  }
 
   window.RN = {
     init(configJson) {
@@ -28469,7 +28428,15 @@
       trackFocus(excerptView);
       trackFocus(annotationView);
       focusedView = excerptView;
-      buildToolbar();
+    },
+    // Quick-syntax actions, driven by the native Compose toolbar.
+    wrap(before, after) {
+      wrapSelection(target(), before, after);
+    },
+    insertTag() {
+      const view = target();
+      insertText(view, "#");
+      startCompletion(view);
     },
     collect() {
       const excerpt = excerptView ? excerptView.state.doc.toString() : "";

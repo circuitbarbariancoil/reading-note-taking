@@ -6,13 +6,23 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -74,7 +84,7 @@ fun EntryEditor(
     // Full-screen overlay instead of Dialog — Dialog creates a separate window
     // that breaks IME focus for WebViews (keyboard won't appear).
     Column(
-        modifier = Modifier.fillMaxSize().background(Paper),
+        modifier = Modifier.fillMaxSize().background(Paper).imePadding().navigationBarsPadding(),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -125,6 +135,58 @@ fun EntryEditor(
                     webView = this
                 }
             },
+        )
+
+        // Native quick-syntax toolbar: lives above the IME (imePadding on the
+        // parent Column), driving the WebView editors via the RN JS bridge.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFEDE6D6))
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            fun js(script: String) {
+                webView?.evaluateJavascript(script, null)
+            }
+            palette.colors.forEach { hc ->
+                val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
+                ToolbarChip(
+                    label = hc.name,
+                    background = tint.copy(alpha = 0.13f),
+                    border = tint,
+                ) { js("window.RN && RN.wrap(${JSONObject.quote("~={${hc.name}}")}, ${JSONObject.quote("=~")});") }
+            }
+            ToolbarChip("《》") { js("window.RN && RN.wrap('\\u300A', '\\u300B');") }
+            ToolbarChip("B", bold = true) { js("window.RN && RN.wrap('**', '**');") }
+            ToolbarChip("#") { js("window.RN && RN.insertTag();") }
+        }
+    }
+}
+
+@Composable
+private fun ToolbarChip(
+    label: String,
+    background: Color = Paper,
+    border: Color = Hairline,
+    bold: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(background)
+            .border(1.dp, border, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            color = Sumi,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
         )
     }
 }

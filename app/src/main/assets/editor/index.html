@@ -15,18 +15,6 @@
       }
       .box:focus-within { border-color: #3C5468; box-shadow: 0 0 0 3px #3C546820; }
       .cm-editor { background: transparent; }
-      .wrap { padding-bottom: 64px; }
-      #toolbar {
-        position: fixed; left: 0; right: 0; bottom: 0;
-        display: flex; gap: 8px; align-items: center;
-        overflow-x: auto; -webkit-overflow-scrolling: touch;
-        padding: 8px 12px; background: #EDE6D6; border-top: 1px solid #DAD2C0;
-      }
-      .tb-chip {
-        flex: 0 0 auto; font-family: inherit; font-size: 13px;
-        padding: 6px 12px; border-radius: 14px;
-        border: 1px solid #DAD2C0; background: #F4EFE3; color: #211E1A;
-      }
     </style>
   </head>
   <body>
@@ -36,7 +24,6 @@
       <div class="label">批注</div>
       <div class="box"><div id="annotation"></div></div>
     </div>
-    <div id="toolbar"></div>
     <script src="editor.bundle.js"></script>
   </body>
 </html>

@@ -256,6 +256,68 @@ class BookRepository(
         }
     }
 
+    /**
+     * Keep an OCR result on a capture that's still waiting for a page number,
+     * so deferring the dialog doesn't lose (or re-bill) the recognition.
+     */
+    suspend fun storeCaptureOcrText(
+        book: Book,
+        capture: com.readingnotes.app.model.Capture,
+        ocrText: String,
+    ): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val updated = base.copy(
+                updatedAt = utcNow(),
+                captures = base.captures.map {
+                    if (it.id == capture.id) it.copy(ocrText = ocrText) else it
+                },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
+    /** Change an existing page's number, moving its archive image and entries. */
+    suspend fun changePageNumber(
+        book: Book,
+        page: Page,
+        newNumber: Int,
+    ): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val now = utcNow()
+            val newRelPath = "pages/p%04d_archive.webp".format(newNumber)
+            val oldRel = page.archiveImage
+            if (oldRel != null && oldRel != newRelPath) {
+                val src = archiveFile(base.uid, oldRel)
+                if (src.exists()) {
+                    val dest = archiveFile(base.uid, newRelPath)
+                    dest.parentFile?.mkdirs()
+                    src.copyTo(dest, overwrite = true)
+                    src.delete()
+                }
+            }
+            val updated = base.copy(
+                updatedAt = now,
+                pages = base.pages.map {
+                    if (it.page == page.page && it.addedAt == page.addedAt) {
+                        it.copy(page = newNumber, archiveImage = if (oldRel != null) newRelPath else null)
+                    } else {
+                        it
+                    }
+                }.sortedBy { it.page },
+                entries = base.entries.map {
+                    if (it.page == page.page) it.copy(page = newNumber) else it
+                },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /** Delete an unprocessed capture (photo) and its image file. */
     suspend fun deleteCapture(
         book: Book,

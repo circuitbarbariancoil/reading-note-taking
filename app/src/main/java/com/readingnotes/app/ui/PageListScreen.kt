@@ -68,6 +68,7 @@ fun PageListScreen(
     onBack: () -> Unit,
     onOcrCapture: (Capture) -> Unit,
     onAssignPage: (Capture, Int) -> Unit,
+    onFillPageNumber: (Capture) -> Unit,
     onDeleteCapture: (Capture) -> Unit,
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
@@ -178,7 +179,10 @@ fun PageListScreen(
                         CaptureThumbnail(
                             capture = capture,
                             state = ocrStatus[capture.id],
-                            onClick = { if (ocrStatus[capture.id] != OcrJobState.Running) assignPageDialog = capture },
+                            onClick = {
+                                if (ocrStatus[capture.id] == OcrJobState.Running) return@CaptureThumbnail
+                                if (capture.ocrText != null) onFillPageNumber(capture) else assignPageDialog = capture
+                            },
                         )
                     }
                 }
@@ -331,9 +335,17 @@ private fun CaptureThumbnail(capture: Capture, state: OcrJobState?, onClick: () 
             }
         }
         Text(
-            if (state == OcrJobState.Failed) "OCR 失败，点击重试" else capture.capturedAt.take(10),
+            when {
+                state == OcrJobState.Failed -> "OCR 失败，点击重试"
+                capture.ocrText != null -> "已识别 · 待填页码"
+                else -> capture.capturedAt.take(10)
+            },
             fontSize = 9.sp,
-            color = if (state == OcrJobState.Failed) Color(0xFFB3524A) else SumiSoft,
+            color = when {
+                state == OcrJobState.Failed -> Color(0xFFB3524A)
+                capture.ocrText != null -> Accent
+                else -> SumiSoft
+            },
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 3.dp),
         )

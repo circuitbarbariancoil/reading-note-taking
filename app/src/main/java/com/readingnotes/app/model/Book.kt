@@ -35,6 +35,8 @@ data class Capture(
     val id: String,
     val imagePath: String,
     val capturedAt: String,
+    /** OCR result kept when no page number could be extracted (待填页码). */
+    val ocrText: String? = null,
 )
 
 /**
