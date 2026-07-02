@@ -32,10 +32,14 @@ import com.readingnotes.app.repository.ProcessOutcome
 import com.readingnotes.app.settings.AppSettings
 import com.readingnotes.app.settings.SettingsStore
 import com.readingnotes.app.ui.BookShelfScreen
+import com.readingnotes.app.ui.BrowsableEntry
 import com.readingnotes.app.ui.CaptureScreen
+import com.readingnotes.app.ui.EntryBrowserScreen
+import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.ui.OcrJobState
 import com.readingnotes.app.ui.PageListScreen
 import com.readingnotes.app.ui.PaletteScreen
+import com.readingnotes.app.ui.ProviderSettingsScreen
 import com.readingnotes.app.ui.SettingsScreen
 import com.readingnotes.app.ui.WorkbenchScreen
 import com.readingnotes.app.ui.theme.ReadingNotesTheme
@@ -46,8 +50,10 @@ private enum class ShellScreen {
     PageList,
     Capture,
     Settings,
+    ProviderSettings,
     Workbench,
     Palette,
+    EntryBrowser,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -65,6 +71,8 @@ class MainActivity : ComponentActivity() {
     /** OCR job status keyed by capture id (or "page-N" for re-OCR of a page). */
     private val ocrStatus = mutableStateMapOf<String, OcrJobState>()
     private var pendingPageNumber by mutableStateOf<PendingPageNumber?>(null)
+    private var ocrErrorMessage by mutableStateOf<String?>(null)
+    private var entryBrowserBookUid by mutableStateOf<String?>(null)
 
     /** Where 拍照 was launched from: workbench shots auto-OCR and jump to the new page. */
     private var captureFromWorkbench = false
@@ -90,7 +98,7 @@ class MainActivity : ComponentActivity() {
     private fun AppShell() {
         BackHandler(enabled = currentScreen != ShellScreen.BookShelf) {
             currentScreen = when (currentScreen) {
-                ShellScreen.PageList, ShellScreen.Settings -> ShellScreen.BookShelf
+                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser -> ShellScreen.BookShelf
                 ShellScreen.Capture -> if (captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
@@ -110,6 +118,10 @@ class MainActivity : ComponentActivity() {
                 onNewBook = { book ->
                     activeBook = book
                     currentScreen = ShellScreen.PageList
+                },
+                onEntries = {
+                    entryBrowserBookUid = null
+                    currentScreen = ShellScreen.EntryBrowser
                 },
             )
 
@@ -135,6 +147,10 @@ class MainActivity : ComponentActivity() {
                             capture.ocrText?.let { pendingPageNumber = PendingPageNumber(capture, it) }
                         },
                         onDeleteCapture = { capture -> deleteCapture(capture) },
+                        onEntries = {
+                            entryBrowserBookUid = book.uid
+                            currentScreen = ShellScreen.EntryBrowser
+                        },
                     )
                 }
             }
@@ -168,7 +184,17 @@ class MainActivity : ComponentActivity() {
                     settingsStore.clearDropboxCredential()
                     appSettings = settingsStore.read()
                 },
+                onProviderSettings = { currentScreen = ShellScreen.ProviderSettings },
                 onBack = { currentScreen = ShellScreen.BookShelf },
+            )
+
+            ShellScreen.ProviderSettings -> ProviderSettingsScreen(
+                config = appSettings.providerConfig,
+                onSave = { config ->
+                    settingsStore.saveProviderConfig(config)
+                    appSettings = settingsStore.read()
+                },
+                onBack = { currentScreen = ShellScreen.Settings },
             )
 
             ShellScreen.Workbench -> {
@@ -182,6 +208,8 @@ class MainActivity : ComponentActivity() {
                         settings = appSettings,
                         repository = bookRepository,
                         ocrBusy = ocrStatus.values.any { it == OcrJobState.Running },
+                        ocrError = ocrErrorMessage,
+                        onDismissOcrError = { ocrErrorMessage = null },
                         onBack = {
                             activeBook = bookRepository.loadBook(book.uid) ?: book
                             currentScreen = ShellScreen.PageList
@@ -202,6 +230,30 @@ class MainActivity : ComponentActivity() {
                 },
                 onBack = { currentScreen = ShellScreen.Workbench },
             )
+
+            ShellScreen.EntryBrowser -> {
+                val allBooks = bookRepository.listBooks()
+                val allEntries = allBooks.flatMap { book ->
+                    book.entries.map { entry -> BrowsableEntry(entry, book.title, book.uid) }
+                }
+                EntryBrowserScreen(
+                    entries = allEntries,
+                    books = allBooks,
+                    filterBookUid = entryBrowserBookUid,
+                    colors = appSettings.palette.colors,
+                    onBack = {
+                        currentScreen = if (entryBrowserBookUid != null) ShellScreen.PageList else ShellScreen.BookShelf
+                    },
+                    onEntryClick = { item ->
+                        val book = allBooks.find { it.uid == item.bookUid }
+                        if (book != null) {
+                            activeBook = book
+                            activePageIndex = book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0)
+                            currentScreen = ShellScreen.Workbench
+                        }
+                    },
+                )
+            }
         }
 
         pendingPageNumber?.let { pending ->
@@ -254,7 +306,7 @@ class MainActivity : ComponentActivity() {
         }
         ocrStatus[capture.id] = OcrJobState.Running
         try {
-            when (val outcome = bookRepository.processCapture(book, capture, key, precomputedOcrText = capture.ocrText)) {
+            when (val outcome = bookRepository.processCapture(book, capture, key, precomputedOcrText = capture.ocrText, providerConfig = appSettings.providerConfig)) {
                 is ProcessOutcome.Done -> {
                     ocrStatus.remove(capture.id)
                     activeBook = outcome.book
@@ -275,6 +327,9 @@ class MainActivity : ComponentActivity() {
             }
         } catch (t: Throwable) {
             ocrStatus[capture.id] = OcrJobState.Failed
+            ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
+            // Enqueue for background retry
+            OcrRetryWorker.enqueueCaptureOcr(this@MainActivity, book.uid, capture.id)
         }
     }
 
@@ -289,6 +344,7 @@ class MainActivity : ComponentActivity() {
                     key,
                     manualPageNumber = pageNumber,
                     precomputedOcrText = pending.ocrText,
+                    providerConfig = appSettings.providerConfig,
                 )
                 if (outcome is ProcessOutcome.Done) {
                     activeBook = outcome.book
@@ -326,6 +382,7 @@ class MainActivity : ComponentActivity() {
                     appSettings.geminiApiKey.orEmpty(),
                     manualPageNumber = pageNumber,
                     precomputedOcrText = ocrText,
+                    providerConfig = appSettings.providerConfig,
                 )
                 (outcome as ProcessOutcome.Done).book
             } else {
@@ -366,12 +423,15 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             ocrStatus[statusKey] = OcrJobState.Running
             try {
-                val updated = bookRepository.ocrExistingPage(book, page, key)
+                val updated = bookRepository.ocrExistingPage(book, page, key, providerConfig = appSettings.providerConfig)
                 ocrStatus.remove(statusKey)
                 activeBook = updated
                 syncToDropbox(updated)
             } catch (t: Throwable) {
                 ocrStatus[statusKey] = OcrJobState.Failed
+                ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
+                // Enqueue for background retry
+                OcrRetryWorker.enqueuePageOcr(this@MainActivity, book.uid, page.page)
             }
         }
     }

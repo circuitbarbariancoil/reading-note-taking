@@ -7,6 +7,8 @@ import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.BookStore
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.GeminiOcrClient
+import com.readingnotes.app.ocr.OcrDispatcher
+import com.readingnotes.app.ocr.ProviderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -109,10 +111,14 @@ class BookRepository(
         }
     }
 
-    /** Load a specific book by uid. */
+    /** Load a specific book by uid, recovering from backup if corrupted. */
     fun loadBook(uid: String): Book? {
         val jsonFile = bookJsonFile(uid)
-        return if (jsonFile.exists()) runCatching { BookStore.decode(jsonFile.readText()) }.getOrNull() else null
+        if (!jsonFile.exists()) return recoverFromBackup(uid)
+        return runCatching { BookStore.decode(jsonFile.readText()) }.getOrElse {
+            // Main file corrupted; attempt backup recovery
+            recoverFromBackup(uid)
+        }
     }
 
     /** Delete a book and all its data from disk. */
@@ -180,10 +186,11 @@ class BookRepository(
         geminiApiKey: String,
         manualPageNumber: Int? = null,
         precomputedOcrText: String? = null,
+        providerConfig: ProviderConfig? = null,
     ): ProcessOutcome = withContext(Dispatchers.IO) {
         val ocrText = precomputedOcrText ?: run {
             val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(capture.imagePath).readBytes()))
-            GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+            dispatchOcr(ocrJpeg, geminiApiKey, providerConfig)
         }
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
@@ -232,11 +239,12 @@ class BookRepository(
         book: Book,
         page: Page,
         geminiApiKey: String,
+        providerConfig: ProviderConfig? = null,
     ): Book = withContext(Dispatchers.IO) {
         val imagePath = archiveImagePath(book, page)
             ?: throw IllegalStateException("此页没有原始图片，无法 OCR")
         val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(imagePath).readBytes()))
-        val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+        val ocrText = dispatchOcr(ocrJpeg, geminiApiKey, providerConfig)
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
             val now = utcNow()
@@ -244,7 +252,7 @@ class BookRepository(
                 updatedAt = now,
                 pages = base.pages.map {
                     if (it.page == page.page && it.addedAt == page.addedAt) {
-                        it.copy(ocrText = ocrText, ocrModel = GeminiOcrClient.DEFAULT_MODEL, ocrCapturedAt = now)
+                        it.copy(ocrText = ocrText, ocrModel = providerConfig?.activeProvider?.model ?: GeminiOcrClient.DEFAULT_MODEL, ocrCapturedAt = now)
                     } else {
                         it
                     }
@@ -414,7 +422,41 @@ class BookRepository(
     private fun saveBook(book: Book) {
         val file = bookJsonFile(book.uid)
         file.parentFile?.mkdirs()
-        file.writeText(BookStore.encode(book))
+        val json = BookStore.encode(book)
+        // Validate JSON is well-formed before writing
+        runCatching { BookStore.decode(json) }.getOrElse {
+            throw IllegalStateException("Book serialization produced invalid JSON", it)
+        }
+        // Backup current file before overwriting
+        val bak = File(file.parentFile, "book.json.bak")
+        if (file.exists()) {
+            file.copyTo(bak, overwrite = true)
+        }
+        // Write to temp then atomic rename
+        val tmp = File(file.parentFile, "book.json.tmp")
+        tmp.writeText(json)
+        if (!tmp.renameTo(file)) {
+            // Fallback: direct write if rename fails (cross-filesystem)
+            file.writeText(json)
+            tmp.delete()
+        }
+    }
+
+    /**
+     * Attempt to recover a book from its backup file if the main file is missing
+     * or corrupted.
+     */
+    private fun recoverFromBackup(uid: String): Book? {
+        val dir = bookDir(uid)
+        val bak = File(dir, "book.json.bak")
+        if (!bak.exists()) return null
+        return runCatching {
+            val book = BookStore.decode(bak.readText())
+            // Restore the backup as the main file
+            val main = File(dir, "book.json")
+            bak.copyTo(main, overwrite = true)
+            book
+        }.getOrNull()
     }
 
     private fun saveArchiveImage(uid: String, relativePath: String, bytes: ByteArray) {
@@ -436,12 +478,30 @@ class BookRepository(
         return children.firstOrNull { File(it, "book.json").exists() }?.let { File(it, "book.json") }
     }
 
+    /**
+     * Dispatch OCR: use OcrDispatcher if providerConfig has providers, else
+     * fall back to legacy GeminiOcrClient with the raw API key.
+     */
+    private suspend fun dispatchOcr(
+        ocrJpeg: ByteArray,
+        legacyApiKey: String,
+        providerConfig: ProviderConfig?,
+    ): String {
+        val config = providerConfig?.takeIf { it.providers.isNotEmpty() }
+        return if (config != null) {
+            OcrDispatcher(config).ocrPage(ocrJpeg).text
+        } else {
+            GeminiOcrClient(legacyApiKey).ocrPage(ocrJpeg)
+        }
+    }
+
     private fun utcNow(): String = java.time.Instant.now().toString()
 
     companion object {
-        private val PAGE_NUM_PATTERN = Regex("""\[非本文[：:]\s*[pP]?\.?(\d+)\s*]""")
+        // Loosened pattern: find any digits inside a [非本文...] block.
+        private val PAGE_NUM_PATTERN = Regex("\\[\u975e\u672c\u6587[\uff1a:].*?(\\d+).*?\\]")
 
-        /** Extracts page number from OCR output's [非本文: p.XX] tag, if present. */
+        /** Extracts page number from OCR output's non-body tag, if present. */
         fun extractPageNumber(ocrText: String): Int? =
             PAGE_NUM_PATTERN.find(ocrText)?.groupValues?.get(1)?.toIntOrNull()
     }

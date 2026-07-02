@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.readingnotes.app.model.HighlightPalette
+import com.readingnotes.app.ocr.LlmProvider
+import com.readingnotes.app.ocr.ProviderConfig
 import kotlinx.serialization.json.Json
 
 data class AppSettings(
@@ -12,9 +14,11 @@ data class AppSettings(
     val dropboxCredentialJson: String? = null,
     val bookTitle: String = DEFAULT_BOOK_TITLE,
     val palette: HighlightPalette = HighlightPalette.DEFAULT,
+    val providerConfig: ProviderConfig = ProviderConfig(),
 ) {
     val hasGeminiKey: Boolean get() = !geminiApiKey.isNullOrBlank()
     val hasDropboxCredential: Boolean get() = !dropboxCredentialJson.isNullOrBlank()
+    val hasAnyProvider: Boolean get() = providerConfig.providers.any { it.apiKey.isNotBlank() }
 
     companion object {
         const val DEFAULT_BOOK_TITLE = "未命名"
@@ -32,14 +36,29 @@ class SettingsStore(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
 
-    fun read(): AppSettings = AppSettings(
-        geminiApiKey = prefs.getString(KEY_GEMINI_API_KEY, null),
-        dropboxCredentialJson = prefs.getString(KEY_DROPBOX_CREDENTIAL_JSON, null),
-        bookTitle = prefs.getString(KEY_BOOK_TITLE, AppSettings.DEFAULT_BOOK_TITLE)
-            .orEmpty()
-            .ifBlank { AppSettings.DEFAULT_BOOK_TITLE },
-        palette = readPalette(),
-    )
+    fun read(): AppSettings {
+        val providerConfig = readProviderConfig()
+        // Migrate legacy geminiApiKey into providers if providers are empty
+        val legacyKey = prefs.getString(KEY_GEMINI_API_KEY, null)
+        val effectiveConfig = if (providerConfig.providers.isEmpty() && !legacyKey.isNullOrBlank()) {
+            ProviderConfig(
+                providers = listOf(LlmProvider.geminiDefault(legacyKey)),
+                activeIndex = 0,
+                fallbackOnError = true,
+            )
+        } else {
+            providerConfig
+        }
+        return AppSettings(
+            geminiApiKey = legacyKey,
+            dropboxCredentialJson = prefs.getString(KEY_DROPBOX_CREDENTIAL_JSON, null),
+            bookTitle = prefs.getString(KEY_BOOK_TITLE, AppSettings.DEFAULT_BOOK_TITLE)
+                .orEmpty()
+                .ifBlank { AppSettings.DEFAULT_BOOK_TITLE },
+            palette = readPalette(),
+            providerConfig = effectiveConfig,
+        )
+    }
 
     private fun readPalette(): HighlightPalette {
         val raw = prefs.getString(KEY_HIGHLIGHT_PALETTE, null) ?: return HighlightPalette.DEFAULT
@@ -76,6 +95,18 @@ class SettingsStore(context: Context) {
         ).apply()
     }
 
+    fun saveProviderConfig(config: ProviderConfig) {
+        prefs.edit()
+            .putString(KEY_PROVIDER_CONFIG, json.encodeToString(ProviderConfig.serializer(), config))
+            .apply()
+    }
+
+    private fun readProviderConfig(): ProviderConfig {
+        val raw = prefs.getString(KEY_PROVIDER_CONFIG, null) ?: return ProviderConfig()
+        return runCatching { json.decodeFromString(ProviderConfig.serializer(), raw) }
+            .getOrDefault(ProviderConfig())
+    }
+
     companion object {
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private const val PREFS_NAME = "secure_settings"
@@ -83,5 +114,6 @@ class SettingsStore(context: Context) {
         private const val KEY_DROPBOX_CREDENTIAL_JSON = "dropbox_credential_json"
         private const val KEY_BOOK_TITLE = "book_title"
         private const val KEY_HIGHLIGHT_PALETTE = "highlight_palette"
+        private const val KEY_PROVIDER_CONFIG = "provider_config"
     }
 }

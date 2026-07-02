@@ -70,6 +70,7 @@ fun PageListScreen(
     onAssignPage: (Capture, Int) -> Unit,
     onFillPageNumber: (Capture) -> Unit,
     onDeleteCapture: (Capture) -> Unit,
+    onEntries: () -> Unit = {},
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
     var assignPageDialog by remember { mutableStateOf<Capture?>(null) }
@@ -108,6 +109,18 @@ fun PageListScreen(
                         color = SumiSoft,
                     )
                 }
+                // Entries button
+                Text(
+                    "条目",
+                    fontSize = 12.sp,
+                    color = Accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFFEDE6D6))
+                        .clickable(onClick = onEntries)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+                Spacer(Modifier.padding(horizontal = 4.dp))
                 // Sort toggle
                 Text(
                     if (sortMode == PageSortMode.ByPageNumber) "页码" else "时间",

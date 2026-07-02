@@ -25,6 +25,7 @@ fun SettingsScreen(
     onSave: (String, String) -> Unit,
     onConnectDropbox: () -> Unit,
     onDisconnectDropbox: () -> Unit,
+    onProviderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
     var geminiKey by remember(settings) { mutableStateOf(settings.geminiApiKey.orEmpty()) }
@@ -60,7 +61,15 @@ fun SettingsScreen(
             Text("保存")
         }
 
+        Button(
+            onClick = onProviderSettings,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("模型设置")
+        }
+
         Text("Dropbox 状态：${if (settings.hasDropboxCredential) "已连接" else "未连接"}")
+
         Button(onClick = onConnectDropbox, modifier = Modifier.fillMaxWidth()) {
             Text("连接 Dropbox")
         }

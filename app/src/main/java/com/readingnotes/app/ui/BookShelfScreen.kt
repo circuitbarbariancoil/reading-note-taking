@@ -59,6 +59,7 @@ fun BookShelfScreen(
     onOpenBook: (Book) -> Unit,
     onSettings: () -> Unit,
     onNewBook: (Book) -> Unit,
+    onEntries: () -> Unit = {},
 ) {
     var gridMode by remember { mutableStateOf(true) }
     var showNewDialog by remember { mutableStateOf(false) }
@@ -78,6 +79,15 @@ fun BookShelfScreen(
                     color = Sumi,
                 )
                 Spacer(Modifier.weight(1f))
+                Text(
+                    "条目",
+                    fontSize = 13.sp,
+                    color = Accent,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(onClick = onEntries)
+                        .padding(8.dp),
+                )
                 Text(
                     if (gridMode) "☷" else "☰",
                     fontSize = 20.sp,

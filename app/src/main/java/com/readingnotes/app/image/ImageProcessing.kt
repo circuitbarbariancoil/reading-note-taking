@@ -17,9 +17,27 @@ object ImageProcessing {
     const val ARCHIVE_LONG_EDGE = 2000
     const val ARCHIVE_QUALITY = 90
 
-    fun decode(bytes: ByteArray): Bitmap =
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    /**
+     * Decode image bytes with OOM-safe subsampling: if the raw image is larger
+     * than [MAX_DECODE_PIXELS], subsample to fit within budget.
+     */
+    fun decode(bytes: ByteArray): Bitmap {
+        // First pass: determine dimensions without allocating pixels
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val w = opts.outWidth
+        val h = opts.outHeight
+        var sampleSize = 1
+        while ((w / sampleSize) * (h / sampleSize) > MAX_DECODE_PIXELS) {
+            sampleSize *= 2
+        }
+        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
             ?: error("Could not decode image")
+    }
+
+    /** Max decoded bitmap pixels (~20 MP) to avoid OOM on very large camera images. */
+    private const val MAX_DECODE_PIXELS = 20_000_000
 
     /** JPEG bytes for OCR: downscaled to [OCR_LONG_EDGE]. */
     fun toOcrJpeg(src: Bitmap): ByteArray =

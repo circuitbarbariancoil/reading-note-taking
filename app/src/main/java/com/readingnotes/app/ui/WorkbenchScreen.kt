@@ -75,6 +75,8 @@ fun WorkbenchScreen(
     onCapture: () -> Unit = {},
     initialPageIndex: Int = 0,
     ocrBusy: Boolean = false,
+    ocrError: String? = null,
+    onDismissOcrError: () -> Unit = {},
     onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
     onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
 ) {
@@ -138,6 +140,20 @@ fun WorkbenchScreen(
                     onBack = onBack,
                     onPageMenu = { pageMenuOpen = true },
                 )
+            }
+
+            // OCR error banner
+            ocrError?.let { msg ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFFDE8E6))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(msg, fontSize = 12.sp, color = Color(0xFFB3524A), modifier = Modifier.weight(1f), maxLines = 2)
+                    Text("✕", fontSize = 14.sp, color = Color(0xFFB3524A), modifier = Modifier.clickable(onClick = onDismissOcrError).padding(start = 8.dp))
+                }
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
