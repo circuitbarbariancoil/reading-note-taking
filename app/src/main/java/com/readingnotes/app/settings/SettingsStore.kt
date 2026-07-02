@@ -7,13 +7,28 @@ import androidx.security.crypto.MasterKey
 import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.ocr.LlmProvider
 import com.readingnotes.app.ocr.ProviderConfig
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.time.Instant
+import java.time.YearMonth
+import java.time.ZoneOffset
+
+@Serializable
+data class ApiUsageStats(
+    val totalCalls: Int = 0,
+    val monthCalls: Int = 0,
+    val monthKey: String = "",
+    val lastCallAt: String? = null,
+)
 
 data class AppSettings(
     val geminiApiKey: String? = null,
     val dropboxCredentialJson: String? = null,
     val bookTitle: String = DEFAULT_BOOK_TITLE,
     val palette: HighlightPalette = HighlightPalette.DEFAULT,
+    val apiUsage: ApiUsageStats = ApiUsageStats(),
+    val maxOcrRetries: Int = 3,
+    val monthlyApiBudget: Int = 0,
     val providerConfig: ProviderConfig = ProviderConfig(),
 ) {
     val hasGeminiKey: Boolean get() = !geminiApiKey.isNullOrBlank()
@@ -56,6 +71,9 @@ class SettingsStore(context: Context) {
                 .orEmpty()
                 .ifBlank { AppSettings.DEFAULT_BOOK_TITLE },
             palette = readPalette(),
+            apiUsage = readApiUsage(),
+            maxOcrRetries = prefs.getInt(KEY_MAX_OCR_RETRIES, 3).coerceIn(0, 10),
+            monthlyApiBudget = prefs.getInt(KEY_MONTHLY_API_BUDGET, 0).coerceAtLeast(0),
             providerConfig = effectiveConfig,
         )
     }
@@ -70,6 +88,27 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putString(KEY_HIGHLIGHT_PALETTE, json.encodeToString(HighlightPalette.serializer(), palette))
             .apply()
+    }
+
+    fun saveApiUsage(stats: ApiUsageStats) {
+        prefs.edit()
+            .putString(KEY_API_USAGE, json.encodeToString(ApiUsageStats.serializer(), stats))
+            .apply()
+    }
+
+    @Synchronized
+    fun recordApiCall() {
+        val current = readApiUsage()
+        val monthKey = YearMonth.now(ZoneOffset.UTC).toString()
+        val resetMonthCalls = if (current.monthKey == monthKey) current.monthCalls else 0
+        saveApiUsage(
+            current.copy(
+                totalCalls = current.totalCalls + 1,
+                monthCalls = resetMonthCalls + 1,
+                monthKey = monthKey,
+                lastCallAt = Instant.now().toString(),
+            )
+        )
     }
 
     fun saveGeminiApiKey(value: String) {
@@ -101,10 +140,24 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
+    fun saveMaxOcrRetries(value: Int) {
+        prefs.edit().putInt(KEY_MAX_OCR_RETRIES, value.coerceIn(0, 10)).apply()
+    }
+
+    fun saveMonthlyApiBudget(value: Int) {
+        prefs.edit().putInt(KEY_MONTHLY_API_BUDGET, value.coerceAtLeast(0)).apply()
+    }
+
     private fun readProviderConfig(): ProviderConfig {
         val raw = prefs.getString(KEY_PROVIDER_CONFIG, null) ?: return ProviderConfig()
         return runCatching { json.decodeFromString(ProviderConfig.serializer(), raw) }
             .getOrDefault(ProviderConfig())
+    }
+
+    private fun readApiUsage(): ApiUsageStats {
+        val raw = prefs.getString(KEY_API_USAGE, null) ?: return ApiUsageStats()
+        return runCatching { json.decodeFromString(ApiUsageStats.serializer(), raw) }
+            .getOrDefault(ApiUsageStats())
     }
 
     companion object {
@@ -114,6 +167,9 @@ class SettingsStore(context: Context) {
         private const val KEY_DROPBOX_CREDENTIAL_JSON = "dropbox_credential_json"
         private const val KEY_BOOK_TITLE = "book_title"
         private const val KEY_HIGHLIGHT_PALETTE = "highlight_palette"
+        private const val KEY_API_USAGE = "api_usage"
+        private const val KEY_MAX_OCR_RETRIES = "max_ocr_retries"
+        private const val KEY_MONTHLY_API_BUDGET = "monthly_api_budget"
         private const val KEY_PROVIDER_CONFIG = "provider_config"
     }
 }

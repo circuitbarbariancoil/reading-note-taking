@@ -79,6 +79,10 @@ fun WorkbenchScreen(
     onDismissOcrError: () -> Unit = {},
     onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
     onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
+    processItems: List<ProcessItem> = emptyList(),
+    onRetryProcessItem: (ProcessItem) -> Unit = {},
+    onFillProcessItem: (ProcessItem) -> Unit = {},
+    onDismissProcessItem: (ProcessItem) -> Unit = {},
 ) {
     var book by remember(initialBook) { mutableStateOf(initialBook) }
     var pageIndex by remember(initialBook, initialPageIndex) { mutableStateOf(initialPageIndex) }
@@ -212,6 +216,16 @@ fun WorkbenchScreen(
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
                 )
             }
+        }
+
+        if (processItems.isNotEmpty()) {
+            ProcessingQueueCard(
+                items = processItems,
+                onRetry = onRetryProcessItem,
+                onFillPage = onFillProcessItem,
+                onDismiss = onDismissProcessItem,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
+            )
         }
     }
 

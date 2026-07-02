@@ -22,7 +22,7 @@ import com.readingnotes.app.settings.AppSettings
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
-    onSave: (String, String) -> Unit,
+    onSave: (String, String, Int, Int) -> Unit,
     onConnectDropbox: () -> Unit,
     onDisconnectDropbox: () -> Unit,
     onProviderSettings: () -> Unit,
@@ -30,6 +30,8 @@ fun SettingsScreen(
 ) {
     var geminiKey by remember(settings) { mutableStateOf(settings.geminiApiKey.orEmpty()) }
     var bookTitle by remember(settings) { mutableStateOf(settings.bookTitle) }
+    var maxRetriesText by remember(settings) { mutableStateOf(settings.maxOcrRetries.toString()) }
+    var monthlyBudgetText by remember(settings) { mutableStateOf(settings.monthlyApiBudget.toString()) }
 
     Column(
         modifier = Modifier
@@ -54,8 +56,30 @@ fun SettingsScreen(
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
         )
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = maxRetriesText,
+            onValueChange = { maxRetriesText = it.filter { c -> c.isDigit() } },
+            label = { Text("OCR 自动重试次数") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = monthlyBudgetText,
+            onValueChange = { monthlyBudgetText = it.filter { c -> c.isDigit() } },
+            label = { Text("本月 API 上限（0=无限）") },
+            singleLine = true,
+        )
+        Text("本月 API 调用：${settings.apiUsage.monthCalls} 次 · 累计：${settings.apiUsage.totalCalls} 次")
         Button(
-            onClick = { onSave(geminiKey, bookTitle) },
+            onClick = {
+                onSave(
+                    geminiKey,
+                    bookTitle,
+                    maxRetriesText.toIntOrNull()?.coerceIn(0, 10) ?: settings.maxOcrRetries,
+                    monthlyBudgetText.toIntOrNull()?.coerceAtLeast(0) ?: settings.monthlyApiBudget,
+                )
+            },
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("保存")

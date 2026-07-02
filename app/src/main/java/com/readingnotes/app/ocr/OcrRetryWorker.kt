@@ -32,6 +32,8 @@ class OcrRetryWorker(
         val settings = settingsStore.read()
         val repository = BookRepository(applicationContext)
 
+        if (settings.maxOcrRetries == 0) return Result.failure()
+
         val book = repository.loadBook(bookUid) ?: return Result.failure()
 
         return try {
@@ -43,6 +45,7 @@ class OcrRetryWorker(
                     capture = capture,
                     geminiApiKey = settings.geminiApiKey.orEmpty(),
                     providerConfig = settings.providerConfig,
+                    onApiCall = { settingsStore.recordApiCall() },
                 )
             } else if (pageNumber >= 0) {
                 // Retry OCR for an existing page
@@ -52,11 +55,12 @@ class OcrRetryWorker(
                     page = page,
                     geminiApiKey = settings.geminiApiKey.orEmpty(),
                     providerConfig = settings.providerConfig,
+                    onApiCall = { settingsStore.recordApiCall() },
                 )
             }
             Result.success()
         } catch (_: Exception) {
-            if (runAttemptCount < MAX_RETRIES) Result.retry() else Result.failure()
+            if (runAttemptCount < settings.maxOcrRetries) Result.retry() else Result.failure()
         }
     }
 
@@ -64,8 +68,6 @@ class OcrRetryWorker(
         private const val KEY_BOOK_UID = "book_uid"
         private const val KEY_PAGE_NUMBER = "page_number"
         private const val KEY_CAPTURE_ID = "capture_id"
-        private const val MAX_RETRIES = 3
-
         /** Enqueue a retry for a failed page OCR. */
         fun enqueuePageOcr(context: Context, bookUid: String, pageNumber: Int) {
             val workName = "ocr_page_${bookUid}_$pageNumber"

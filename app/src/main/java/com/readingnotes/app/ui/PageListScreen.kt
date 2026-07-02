@@ -67,6 +67,10 @@ fun PageListScreen(
     onBatchOcr: () -> Unit,
     onBack: () -> Unit,
     onOcrCapture: (Capture) -> Unit,
+    processItems: List<ProcessItem> = emptyList(),
+    onRetryProcessItem: (ProcessItem) -> Unit = {},
+    onFillProcessItem: (ProcessItem) -> Unit = {},
+    onDismissProcessItem: (ProcessItem) -> Unit = {},
     onAssignPage: (Capture, Int) -> Unit,
     onFillPageNumber: (Capture) -> Unit,
     onDeleteCapture: (Capture) -> Unit,
@@ -219,6 +223,16 @@ fun PageListScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
+        }
+
+        if (processItems.isNotEmpty()) {
+            ProcessingQueueCard(
+                items = processItems,
+                onRetry = onRetryProcessItem,
+                onFillPage = onFillProcessItem,
+                onDismiss = onDismissProcessItem,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
+            )
         }
     }
 

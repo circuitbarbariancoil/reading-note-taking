@@ -1,7 +1,9 @@
 package com.readingnotes.app.repository
 
 import android.content.Context
+import com.readingnotes.app.dropbox.DropboxSyncWorker
 import com.readingnotes.app.dropbox.DropboxClient
+import com.readingnotes.app.dropbox.SyncQueueStore
 import com.readingnotes.app.image.ImageProcessing
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.BookStore
@@ -37,6 +39,7 @@ class BookRepository(
     private val context: Context,
 ) {
     private val mutex = Mutex()
+    private val syncQueueStore = SyncQueueStore(context)
     private var cachedBook: Book? = null
 
     suspend fun captureAndSync(
@@ -44,6 +47,7 @@ class BookRepository(
         geminiApiKey: String,
         dropboxCredentialJson: String,
         bookTitle: String,
+        onApiCall: () -> Unit = {},
     ): CaptureResult = withContext(Dispatchers.IO) {
         mutex.withLock {
             val sourceBitmap = ImageProcessing.decode(sourceBytes)
@@ -55,6 +59,7 @@ class BookRepository(
             val archiveRelativePath = "pages/p%04d_archive.webp".format(nextPageNumber)
             val now = utcNow()
 
+            onApiCall()
             val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
             val extractedPageNum = extractPageNumber(ocrText)
             val pageNumber = extractedPageNum ?: nextPageNumber
@@ -123,6 +128,10 @@ class BookRepository(
 
     /** Delete a book and all its data from disk. */
     fun deleteBook(uid: String) {
+        val book = loadBook(uid)
+        val dropboxRoot = book?.dropboxRoot ?: "/ReadingVault/books/$uid"
+        syncQueueStore.enqueueDelete(dropboxRoot)
+        DropboxSyncWorker.trigger(context)
         bookDir(uid).deleteRecursively()
         if (cachedBook?.uid == uid) cachedBook = null
     }
@@ -187,10 +196,11 @@ class BookRepository(
         manualPageNumber: Int? = null,
         precomputedOcrText: String? = null,
         providerConfig: ProviderConfig? = null,
+        onApiCall: () -> Unit = {},
     ): ProcessOutcome = withContext(Dispatchers.IO) {
         val ocrText = precomputedOcrText ?: run {
             val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(capture.imagePath).readBytes()))
-            dispatchOcr(ocrJpeg, geminiApiKey, providerConfig)
+            dispatchOcr(ocrJpeg, geminiApiKey, providerConfig, onApiCall)
         }
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
@@ -205,6 +215,7 @@ class BookRepository(
                 captures = base.captures.filterNot { it.id == capture.id },
             )
             saveBook(updated)
+            enqueuePageArchiveUpload(updated, page)
             cachedBook = updated
             ProcessOutcome.Done(updated, page)
         }
@@ -229,6 +240,7 @@ class BookRepository(
                 captures = base.captures.filterNot { it.id == capture.id },
             )
             saveBook(updated)
+            enqueuePageArchiveUpload(updated, page)
             cachedBook = updated
             updated
         }
@@ -240,11 +252,12 @@ class BookRepository(
         page: Page,
         geminiApiKey: String,
         providerConfig: ProviderConfig? = null,
+        onApiCall: () -> Unit = {},
     ): Book = withContext(Dispatchers.IO) {
         val imagePath = archiveImagePath(book, page)
             ?: throw IllegalStateException("此页没有原始图片，无法 OCR")
         val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(imagePath).readBytes()))
-        val ocrText = dispatchOcr(ocrJpeg, geminiApiKey, providerConfig)
+        val ocrText = dispatchOcr(ocrJpeg, geminiApiKey, providerConfig, onApiCall)
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
             val now = utcNow()
@@ -321,6 +334,12 @@ class BookRepository(
                 },
             )
             saveBook(updated)
+            if (oldRel != null && oldRel != newRelPath) {
+                val newLocalFile = archiveFile(updated.uid, newRelPath)
+                syncQueueStore.enqueueDelete("${updated.dropboxRoot}/$oldRel")
+                syncQueueStore.enqueueUpload("${updated.dropboxRoot}/$newRelPath", newLocalFile.absolutePath)
+                DropboxSyncWorker.trigger(context)
+            }
             cachedBook = updated
             updated
         }
@@ -465,6 +484,15 @@ class BookRepository(
         file.writeBytes(bytes)
     }
 
+    private fun enqueuePageArchiveUpload(book: Book, page: Page) {
+        val relativePath = page.archiveImage ?: return
+        syncQueueStore.enqueueUpload(
+            "${book.dropboxRoot}/$relativePath",
+            archiveFile(book.uid, relativePath).absolutePath,
+        )
+        DropboxSyncWorker.trigger(context)
+    }
+
     private fun archiveFile(uid: String, relativePath: String): File =
         File(bookDir(uid), relativePath)
 
@@ -486,11 +514,13 @@ class BookRepository(
         ocrJpeg: ByteArray,
         legacyApiKey: String,
         providerConfig: ProviderConfig?,
+        onApiCall: () -> Unit = {},
     ): String {
         val config = providerConfig?.takeIf { it.providers.isNotEmpty() }
         return if (config != null) {
-            OcrDispatcher(config).ocrPage(ocrJpeg).text
+            OcrDispatcher(config).ocrPage(ocrJpeg, onApiCall).text
         } else {
+            onApiCall()
             GeminiOcrClient(legacyApiKey).ocrPage(ocrJpeg)
         }
     }
