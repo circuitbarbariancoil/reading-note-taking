@@ -447,17 +447,15 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
         )
         if (entry.annotation.isNotBlank()) {
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Hairline))
-            Text(entry.annotation, fontSize = 13.sp, color = SumiSoft)
-        }
-        if (entry.tags.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                entry.tags.forEach { tag ->
-                    Text(
-                        "#$tag", fontSize = 11.sp, color = Accent,
-                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(AccentSoft).padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
-                }
-            }
+            Text(
+                MarkupText.rich(
+                    entry.annotation,
+                    colorMap,
+                    tagStyle = androidx.compose.ui.text.SpanStyle(color = Accent, background = AccentSoft),
+                ),
+                fontSize = 13.sp,
+                color = SumiSoft,
+            )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("p.${entry.page}", fontSize = 11.sp, color = SumiSoft)

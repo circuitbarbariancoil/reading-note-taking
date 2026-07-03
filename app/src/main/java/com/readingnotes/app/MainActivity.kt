@@ -321,6 +321,10 @@ class MainActivity : ComponentActivity() {
                                         entries = book.entries.map { if (it.id == updated.id) updated else it },
                                     )
                                     activeBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
+                                    val fromBrowser = entryEditorFromBrowser
+                                    entryEditTarget = null
+                                    entryEditorFromBrowser = false
+                                    currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
                                 }
                             },
                             onDismiss = {

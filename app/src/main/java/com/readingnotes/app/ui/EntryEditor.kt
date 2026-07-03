@@ -213,7 +213,7 @@ private class CollectBridge(
     fun onCollect(payload: String) {
         val obj = JSONObject(payload)
         val tagsArray = obj.optJSONArray("tags") ?: JSONArray()
-        val tags = (0 until tagsArray.length()).map { tagsArray.getString(it) }
+        val tags = (0 until tagsArray.length()).map { tagsArray.getString(it) }.distinct()
         val excerpt = obj.optString("excerpt")
         val annotation = obj.optString("annotation")
         main.post { onCollect(excerpt, annotation, tags) }
