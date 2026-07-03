@@ -212,7 +212,7 @@ fun WorkbenchScreen(
         selection?.let {
             if (mode == MainMode.Text && !toolbarCollapsed) {
                 SelectionBar(
-                    colors = settings.palette.colors,
+                    colors = settings.palette.activeColors(),
                     onHighlight = ::applyHighlight,
                     onExcerpt = ::applyExcerpt,
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),

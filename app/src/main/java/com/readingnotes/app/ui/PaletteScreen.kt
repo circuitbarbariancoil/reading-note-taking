@@ -1,7 +1,9 @@
 package com.readingnotes.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +49,7 @@ fun PaletteScreen(
     onBack: () -> Unit,
 ) {
     val rows = remember { mutableStateListOf<HighlightColor>().apply { addAll(palette.colors) } }
+    var showPresets by remember { mutableStateOf(false) }
 
     fun commit() = onSave(HighlightPalette(rows.filter { it.name.isNotBlank() }.toList()))
 
@@ -58,20 +61,85 @@ fun PaletteScreen(
         Spacer(Modifier.size(16.dp))
 
         rows.forEachIndexed { index, color ->
+            if (!color.active) return@forEachIndexed
             ColorRow(
                 color = color,
                 onChange = { rows[index] = it },
-                onDelete = { rows.removeAt(index) },
+                onDelete = { rows[index] = color.copy(active = false) },
             )
             Spacer(Modifier.size(10.dp))
         }
 
         Text(
             "＋ 添加颜色", fontSize = 14.sp, color = Accent,
-            modifier = Modifier.clickable { rows.add(HighlightColor("", "#3C5468")) }.padding(vertical = 8.dp),
+            modifier = Modifier.clickable { showPresets = !showPresets }.padding(vertical = 8.dp),
         )
+        if (showPresets) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HighlightPalette.PRESETS.filter { preset -> rows.none { it.name == preset.name && it.active } }.forEach { preset ->
+                    val tint = runCatching { Color(android.graphics.Color.parseColor(preset.css)) }.getOrDefault(Accent)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .border(1.dp, tint, RoundedCornerShape(12.dp))
+                            .clickable {
+                                val existing = rows.indexOfFirst { it.name == preset.name }
+                                if (existing >= 0) rows[existing] = rows[existing].copy(active = true)
+                                else rows.add(preset)
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Box(Modifier.size(12.dp).clip(CircleShape).background(tint))
+                        Spacer(Modifier.size(6.dp))
+                        Text(preset.name, fontSize = 12.sp, color = Sumi)
+                    }
+                }
+                Text(
+                    "自定义…", fontSize = 12.sp, color = Accent,
+                    modifier = Modifier.clickable { rows.add(HighlightColor("", "#3C5468")) }.padding(horizontal = 4.dp, vertical = 5.dp),
+                )
+            }
+        }
+
+        val inactive = rows.filter { !it.active && it.name.isNotBlank() }
+        if (inactive.isNotEmpty()) {
+            Spacer(Modifier.size(16.dp))
+            Text("已停用（旧条目仍按原色渲染）", fontSize = 11.sp, color = SumiSoft)
+            Spacer(Modifier.size(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                inactive.forEach { color ->
+                    val tint = runCatching { Color(android.graphics.Color.parseColor(color.css)) }.getOrDefault(Accent)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFEDE6D6))
+                            .clickable {
+                                val idx = rows.indexOfFirst { it.name == color.name }
+                                if (idx >= 0) rows[idx] = rows[idx].copy(active = true)
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Box(Modifier.size(12.dp).clip(CircleShape).background(tint))
+                        Spacer(Modifier.size(6.dp))
+                        Text("${color.name} ↺", fontSize = 12.sp, color = SumiSoft)
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.size(16.dp))
-        Text("语法 ~={色名}文字=~ ，与 Obsidian 一致。", fontSize = 12.sp, color = SumiSoft)
+        Text("语法 ~={色名}文字=~ ，与 Obsidian 一致。删除颜色只是停用输入/筛选，已写入条目的语法和渲染不受影响。", fontSize = 12.sp, color = SumiSoft)
     }
 }
 

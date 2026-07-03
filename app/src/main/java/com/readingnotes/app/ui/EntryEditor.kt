@@ -76,7 +76,7 @@ fun EntryEditor(
             put(
                 "colors",
                 JSONArray().apply {
-                    palette.colors.forEach { put(JSONObject().put("name", it.name).put("css", it.css)) }
+                    palette.activeColors().forEach { put(JSONObject().put("name", it.name).put("css", it.css)) }
                 },
             )
         }.toString()
@@ -150,7 +150,6 @@ fun EntryEditor(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color(0xFFEDE6D6))
-                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -158,13 +157,20 @@ fun EntryEditor(
             fun js(script: String) {
                 webView?.evaluateJavascript(script, null)
             }
-            palette.colors.forEach { hc ->
-                val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
-                ToolbarChip(
-                    label = hc.name,
-                    background = tint.copy(alpha = 0.13f),
-                    border = tint,
-                ) { js("window.RN && RN.wrap(${JSONObject.quote("~={${hc.name}}")}, ${JSONObject.quote("=~")});") }
+            // Color chips scroll; the fixed syntax chips stay pinned at the right.
+            Row(
+                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                palette.activeColors().forEach { hc ->
+                    val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
+                    ToolbarChip(
+                        label = hc.name,
+                        background = tint.copy(alpha = 0.13f),
+                        border = tint,
+                    ) { js("window.RN && RN.wrap(${JSONObject.quote("~={${hc.name}}")}, ${JSONObject.quote("=~")});") }
+                }
             }
             ToolbarChip("《》") { js("window.RN && RN.wrap('\\u300A', '\\u300B');") }
             ToolbarChip("B", bold = true) { js("window.RN && RN.wrap('**', '**');") }
