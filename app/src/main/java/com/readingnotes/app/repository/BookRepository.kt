@@ -265,7 +265,8 @@ class BookRepository(
                 updatedAt = now,
                 pages = base.pages.map {
                     if (it.page == page.page && it.addedAt == page.addedAt) {
-                        it.copy(ocrText = ocrText, ocrModel = providerConfig?.activeProvider?.model ?: GeminiOcrClient.DEFAULT_MODEL, ocrCapturedAt = now)
+                        // The frozen text changes, so old highlight offsets are meaningless.
+                        it.copy(ocrText = ocrText, ocrModel = providerConfig?.activeProvider?.model ?: GeminiOcrClient.DEFAULT_MODEL, ocrCapturedAt = now, highlights = emptyList())
                     } else {
                         it
                     }

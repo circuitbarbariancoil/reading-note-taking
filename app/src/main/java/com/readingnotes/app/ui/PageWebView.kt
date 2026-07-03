@@ -83,9 +83,10 @@ fun PageWebView(
     interactive: Boolean,
     onSelectionChange: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
+    flash: IntRange? = null,
 ) {
     val currentOnSelection = rememberUpdatedState(onSelectionChange)
-    val html = PageHtml.render(page, colors, vertical, interactive = interactive)
+    val html = PageHtml.render(page, colors, vertical, interactive = interactive, flash = flash)
 
     AndroidView(
         modifier = modifier,

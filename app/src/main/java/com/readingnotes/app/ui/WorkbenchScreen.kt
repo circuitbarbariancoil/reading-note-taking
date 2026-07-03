@@ -86,6 +86,7 @@ fun WorkbenchScreen(
     onDismissProcessItem: (ProcessItem) -> Unit = {},
     batchProcessItems: List<ProcessItem> = emptyList(),
     onClearBatchProcessItems: () -> Unit = {},
+    focusRange: IntRange? = null,
 ) {
     var book by remember(initialBook) { mutableStateOf(initialBook) }
     var pageIndex by remember(initialBook, initialPageIndex) { mutableStateOf(initialPageIndex) }
@@ -96,6 +97,7 @@ fun WorkbenchScreen(
     var drawerOpen by remember { mutableStateOf(false) }
     var editingEntryId by remember { mutableStateOf<String?>(null) }
     var pageMenuOpen by remember { mutableStateOf(false) }
+    var confirmReOcr by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val colors = remember(settings.palette) { settings.palette.asMap() }
@@ -177,6 +179,7 @@ fun WorkbenchScreen(
                         interactive = true,
                         onSelectionChange = { selection = it },
                         modifier = Modifier.fillMaxSize(),
+                        flash = focusRange.takeIf { pageIndex == initialPageIndex },
                     )
                     else -> PageImage(repository.archiveImagePath(book, page))
                 }
@@ -289,7 +292,36 @@ fun WorkbenchScreen(
             },
             onReOcr = {
                 pageMenuOpen = false
-                onOcrPage(page)
+                if (page.highlights.isNotEmpty() || pageEntries.isNotEmpty()) {
+                    confirmReOcr = true
+                } else {
+                    onOcrPage(page)
+                }
+            },
+        )
+    }
+
+    if (confirmReOcr) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmReOcr = false },
+            containerColor = Paper,
+            shape = RoundedCornerShape(16.dp),
+            title = { Text("重新识别这一页？", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Sumi) },
+            text = {
+                Text(
+                    "该页有 ${pageEntries.size} 条笔记。重新识别会替换原文并清除页面上的高亮标记，笔记本身保留。",
+                    fontSize = 13.sp,
+                    color = SumiSoft,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmReOcr = false
+                    onOcrPage(page)
+                }) { Text("重新识别", color = Accent) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmReOcr = false }) { Text("取消", color = SumiSoft) }
             },
         )
     }

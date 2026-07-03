@@ -43,6 +43,9 @@ import com.dropbox.core.oauth.DbxCredential
 import com.readingnotes.app.dropbox.DropboxConfig
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
+import com.readingnotes.app.model.CodePoints
+import com.readingnotes.app.model.Entry
+import com.readingnotes.app.model.MarkupText
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.dropbox.DropboxSyncWorker
 import com.readingnotes.app.repository.BookRepository
@@ -99,6 +102,7 @@ class MainActivity : ComponentActivity() {
     private var pendingPageNumber by mutableStateOf<PendingPageNumber?>(null)
     private var entryEditTarget by mutableStateOf<EntryEditTarget?>(null)
     private var entryEditorFromBrowser by mutableStateOf(false)
+    private var workbenchFocus by mutableStateOf<IntRange?>(null)
     private var ocrErrorMessage by mutableStateOf<String?>(null)
     private var entryBrowserBookUid by mutableStateOf<String?>(null)
 
@@ -167,6 +171,7 @@ class MainActivity : ComponentActivity() {
                         processItems = processQueue,
                         batchProcessItems = batchProcessQueue,
                         onOpenPage = { page ->
+                            workbenchFocus = null
                             activePageIndex = book.pages.indexOf(page).coerceAtLeast(0)
                             currentScreen = ShellScreen.Workbench
                         },
@@ -248,6 +253,7 @@ class MainActivity : ComponentActivity() {
                         ocrError = ocrErrorMessage,
                         onDismissOcrError = { ocrErrorMessage = null },
                         onBack = {
+                            workbenchFocus = null
                             activeBook = bookRepository.loadBook(book.uid) ?: book
                             currentScreen = ShellScreen.PageList
                         },
@@ -261,6 +267,7 @@ class MainActivity : ComponentActivity() {
                         onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
                         onClearBatchProcessItems = { clearBatchProcessQueue() },
+                        focusRange = workbenchFocus,
                     )
                 }
             }
@@ -334,6 +341,7 @@ class MainActivity : ComponentActivity() {
                                 currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
                             },
                             onViewOriginal = {
+                                workbenchFocus = locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
                                 activePageIndex = pageIndex
                                 currentScreen = ShellScreen.Workbench
                             },
@@ -354,6 +362,35 @@ class MainActivity : ComponentActivity() {
                 onDismiss = { pendingPageNumber = null },
             )
         }
+    }
+
+    /**
+     * Locates an entry's source sentence in the (possibly re-OCR'd) page text.
+     * Tries the stored offsets first; falls back to text search when the frozen
+     * text has changed. Returns null when the source can't be found.
+     */
+    private fun locateEntrySource(ocrText: String?, entry: Entry): IntRange? {
+        val text = ocrText ?: return null
+        val plain = MarkupText.plain(entry.text).trim()
+        if (plain.isEmpty()) return null
+        val n = text.codePointCount(0, text.length)
+        if (entry.srcStart in 0 until entry.srcEnd && entry.srcEnd <= n) {
+            val candidate = CodePoints.substring(text, entry.srcStart, entry.srcEnd)
+            val probe = plain.take(8)
+            if (candidate.contains(probe) || plain.contains(candidate.take(8))) {
+                return entry.srcStart until entry.srcEnd
+            }
+        }
+        val fullIdx = text.indexOf(plain)
+        if (fullIdx >= 0) {
+            val s = text.codePointCount(0, fullIdx)
+            return s until s + plain.codePointCount(0, plain.length)
+        }
+        val probe = plain.take(16)
+        val idx = text.indexOf(probe)
+        if (idx < 0) return null
+        val s = text.codePointCount(0, idx)
+        return s until s + probe.codePointCount(0, probe.length)
     }
 
     private fun openCapture(fromWorkbench: Boolean) {

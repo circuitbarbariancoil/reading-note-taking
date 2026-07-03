@@ -25,6 +25,7 @@ object PageHtml {
         vertical: Boolean,
         fontSizePx: Int = 21,
         interactive: Boolean = false,
+        flash: IntRange? = null,
     ): String {
         val writingMode = if (vertical) "vertical-rl" else "horizontal-tb"
         // Vertical (tategaki) 傍線 runs down the right edge of the column; only
@@ -34,6 +35,7 @@ object PageHtml {
             ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}"
         }
         val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors)
+        val startJs = if (flash == null) SCROLL_TO_START_JS else flashJs(flash)
         val selectJs = if (interactive) SELECTION_JS else ""
         val userSelect = if (interactive) "text" else "none"
         return """
@@ -51,8 +53,10 @@ object PageHtml {
               }
               rt{font-size:.5em;}
               ::selection{background:#3C546840;}
+              .flash{animation:flashfade 1.8s ease-out forwards;}
+              @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
               $swatches
-            </style></head><body>$body$SCROLL_TO_START_JS$selectJs</body></html>
+            </style></head><body>$body$startJs$selectJs</body></html>
         """.trimIndent()
     }
 
@@ -140,6 +144,24 @@ object PageHtml {
           window.addEventListener('load', function(){
             var first = document.querySelector('[data-s]');
             if(first) first.scrollIntoView({inline:'start', block:'start'});
+          });
+        </script>
+    """.trimIndent()
+
+    /** Scrolls to and briefly flashes the given code-point range (查看原文 focus). */
+    private fun flashJs(range: IntRange) = """
+        <script>
+          window.addEventListener('load', function(){
+            var spans = document.querySelectorAll('[data-s]');
+            var first = null;
+            for(var i=0;i<spans.length;i++){
+              var s = parseInt(spans[i].getAttribute('data-s'));
+              if(s >= ${range.first} && s <= ${range.last}){
+                spans[i].classList.add('flash');
+                if(!first) first = spans[i];
+              }
+            }
+            if(first) setTimeout(function(){ first.scrollIntoView({inline:'center', block:'center'}); }, 50);
           });
         </script>
     """.trimIndent()
