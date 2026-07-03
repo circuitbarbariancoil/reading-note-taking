@@ -21,13 +21,12 @@ import com.readingnotes.app.settings.AppSettings
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
-    onSave: (String, Int, Int) -> Unit,
+    onSave: (Int, Int) -> Unit,
     onConnectDropbox: () -> Unit,
     onDisconnectDropbox: () -> Unit,
     onProviderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    var geminiKey by remember(settings) { mutableStateOf(settings.geminiApiKey.orEmpty()) }
     var maxRetriesText by remember(settings) { mutableStateOf(settings.maxOcrRetries.toString()) }
     var monthlyBudgetText by remember(settings) { mutableStateOf(settings.monthlyApiBudget.toString()) }
 
@@ -39,13 +38,6 @@ fun SettingsScreen(
     ) {
         ScreenHeader("设置", onBack)
 
-        OutlinedTextField(
-            modifier = Modifier.fillMaxWidth(),
-            value = geminiKey,
-            onValueChange = { geminiKey = it },
-            label = { Text("Gemini API Key") },
-            singleLine = true,
-        )
         OutlinedTextField(
             modifier = Modifier.fillMaxWidth(),
             value = maxRetriesText,
@@ -64,7 +56,6 @@ fun SettingsScreen(
         Button(
             onClick = {
                 onSave(
-                    geminiKey,
                     maxRetriesText.toIntOrNull()?.coerceIn(0, 10) ?: settings.maxOcrRetries,
                     monthlyBudgetText.toIntOrNull()?.coerceAtLeast(0) ?: settings.monthlyApiBudget,
                 )

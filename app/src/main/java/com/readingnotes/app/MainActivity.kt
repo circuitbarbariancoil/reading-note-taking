@@ -210,8 +210,7 @@ class MainActivity : ComponentActivity() {
 
             ShellScreen.Settings -> SettingsScreen(
                 settings = appSettings,
-                onSave = { geminiKey, maxRetries, monthlyBudget ->
-                    settingsStore.saveGeminiApiKey(geminiKey)
+                onSave = { maxRetries, monthlyBudget ->
                     settingsStore.saveMaxOcrRetries(maxRetries)
                     settingsStore.saveMonthlyApiBudget(monthlyBudget)
                     appSettings = settingsStore.read()

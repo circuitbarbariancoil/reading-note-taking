@@ -129,7 +129,7 @@ fun PageListScreen(
                 Spacer(Modifier.padding(horizontal = 4.dp))
                 // Sort toggle
                 Text(
-                    if (sortMode == PageSortMode.ByPageNumber) "页码" else "时间",
+                    if (sortMode == PageSortMode.ByPageNumber) "按页序" else "按时间",
                     fontSize = 12.sp,
                     color = Accent,
                     modifier = Modifier

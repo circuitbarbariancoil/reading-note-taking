@@ -28254,34 +28254,33 @@
 
           const push = (from, to, deco) => marks.push({ from, to, deco });
 
-          if (kind === "jp") {
-            let m;
-            RUBY_RE.lastIndex = 0;
-            while ((m = RUBY_RE.exec(text))) {
-              const from = m.index;
-              const to = from + m[0].length;
-              if (touched(sel, from, to)) continue;
-              push(from, to, Decoration.replace({ widget: new RubyWidget(m[1], m[2]) }));
+          let m;
+          RUBY_RE.lastIndex = 0;
+          while ((m = RUBY_RE.exec(text))) {
+            const from = m.index;
+            const to = from + m[0].length;
+            if (touched(sel, from, to)) continue;
+            push(from, to, Decoration.replace({ widget: new RubyWidget(m[1], m[2]) }));
+          }
+          HL_RE.lastIndex = 0;
+          while ((m = HL_RE.exec(text))) {
+            const from = m.index;
+            const to = from + m[0].length;
+            const innerFrom = from + m[0].indexOf("}") + 1;
+            const innerTo = to - 2;
+            const color = m[1];
+            if (touched(sel, from, to)) {
+              push(from, to, Decoration.mark({ attributes: { style: `background:${cssFor(color)}22;` } }));
+            } else {
+              push(from, innerFrom, Decoration.replace({ widget: new HideWidget() }));
+              push(innerFrom, innerTo, Decoration.mark({
+                attributes: { style: `background:${cssFor(color)}33;border-bottom:2px solid ${cssFor(color)};` },
+              }));
+              push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
             }
-            HL_RE.lastIndex = 0;
-            while ((m = HL_RE.exec(text))) {
-              const from = m.index;
-              const to = from + m[0].length;
-              const innerFrom = from + m[0].indexOf("}") + 1;
-              const innerTo = to - 2;
-              const color = m[1];
-              if (touched(sel, from, to)) {
-                push(from, to, Decoration.mark({ attributes: { style: `background:${cssFor(color)}22;` } }));
-              } else {
-                push(from, innerFrom, Decoration.replace({ widget: new HideWidget() }));
-                push(innerFrom, innerTo, Decoration.mark({
-                  attributes: { style: `background:${cssFor(color)}33;border-bottom:2px solid ${cssFor(color)};` },
-                }));
-                push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
-              }
-            }
-          } else {
-            let m;
+          }
+
+          if (kind === "md") {
             BOLD_RE.lastIndex = 0;
             while ((m = BOLD_RE.exec(text))) {
               const from = m.index;
