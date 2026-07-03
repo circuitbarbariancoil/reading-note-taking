@@ -3,6 +3,7 @@ package com.readingnotes.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,8 +58,8 @@ data class BrowsableEntry(
 )
 
 enum class EntrySortMode(val label: String) {
-    Time("按时间"),
-    Page("按页序"),
+    Time("时间"),
+    Page("页序"),
 }
 
 /**
@@ -77,17 +78,19 @@ fun EntryBrowserScreen(
     onEntryClick: (BrowsableEntry) -> Unit = {},
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf(EntrySortMode.Time) }
     var filterBook by remember(filterBookUid) { mutableStateOf(filterBookUid) }
     var filterColor by remember { mutableStateOf<String?>(null) }
     var filterTag by remember { mutableStateOf<String?>(null) }
-    var groupByBook by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
     var bookSheetOpen by remember { mutableStateOf(false) }
     var bookSearch by remember { mutableStateOf("") }
 
-    // 按页序 only makes sense within one book.
-    if (filterBook == null && sortMode == EntrySortMode.Page) sortMode = EntrySortMode.Time
+    // Global scope: time is the only field; direction + grouping are the choices.
+    var globalNewest by remember { mutableStateOf(true) }
+    var groupByBook by remember { mutableStateOf(false) }
+    // Book scope: field choice (time/page) with flippable direction.
+    var bookSortMode by remember { mutableStateOf(EntrySortMode.Time) }
+    var bookAsc by remember { mutableStateOf(false) }
 
     // All unique tags across entries
     val allTags = remember(entries) {
@@ -98,7 +101,7 @@ fun EntryBrowserScreen(
     }
 
     // Apply filters
-    val filtered = remember(entries, searchQuery, sortMode, filterBook, filterColor, filterTag, groupByBook) {
+    val filtered = remember(entries, searchQuery, filterBook, filterColor, filterTag, globalNewest, groupByBook, bookSortMode, bookAsc) {
         var list = entries.toList()
         if (filterBook != null) {
             list = list.filter { it.bookUid == filterBook }
@@ -117,11 +120,23 @@ fun EntryBrowserScreen(
                     it.bookTitle.lowercase().contains(q)
             }
         }
-        when {
-            filterBook == null && groupByBook ->
-                list.sortedWith(compareBy<BrowsableEntry> { it.bookTitle }.thenByDescending { it.entry.createdAt })
-            sortMode == EntrySortMode.Page -> list.sortedBy { it.entry.page }
-            else -> list.sortedByDescending { it.entry.createdAt }
+        if (filterBook != null) {
+            val cmp = when (bookSortMode) {
+                EntrySortMode.Time -> compareBy<BrowsableEntry> { it.entry.createdAt }
+                EntrySortMode.Page -> compareBy { it.entry.page }
+            }
+            list.sortedWith(if (bookAsc) cmp else cmp.reversed())
+        } else {
+            val timeCmp = if (globalNewest) {
+                compareByDescending<BrowsableEntry> { it.entry.createdAt }
+            } else {
+                compareBy { it.entry.createdAt }
+            }
+            if (groupByBook) {
+                list.sortedWith(compareBy<BrowsableEntry> { it.bookTitle }.then(timeCmp))
+            } else {
+                list.sortedWith(timeCmp)
+            }
         }
     }
 
@@ -189,31 +204,31 @@ fun EntryBrowserScreen(
                         .clickable { sortExpanded = true }
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                 )
-                DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text(if (sortMode == EntrySortMode.Time) "✓ 按时间" else "按时间") },
-                        onClick = {
-                            sortMode = EntrySortMode.Time
+                if (filterBook != null) {
+                    BookSortMenu(
+                        expanded = sortExpanded,
+                        onDismiss = { sortExpanded = false },
+                        mode = bookSortMode,
+                        asc = bookAsc,
+                        onSelect = { mode ->
+                            if (mode == bookSortMode) {
+                                bookAsc = !bookAsc
+                            } else {
+                                bookSortMode = mode
+                                bookAsc = mode == EntrySortMode.Page
+                            }
                             sortExpanded = false
                         },
                     )
-                    if (filterBook != null) {
-                        DropdownMenuItem(
-                            text = { Text(if (sortMode == EntrySortMode.Page) "✓ 按页序" else "按页序") },
-                            onClick = {
-                                sortMode = EntrySortMode.Page
-                                sortExpanded = false
-                            },
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text(if (groupByBook) "✓ 按书分组" else "按书分组") },
-                            onClick = {
-                                groupByBook = !groupByBook
-                                sortExpanded = false
-                            },
-                        )
-                    }
+                } else {
+                    GlobalSortMenu(
+                        expanded = sortExpanded,
+                        onDismiss = { sortExpanded = false },
+                        newest = globalNewest,
+                        onNewest = { globalNewest = it; sortExpanded = false },
+                        groupByBook = groupByBook,
+                        onGroupToggle = { groupByBook = !groupByBook; sortExpanded = false },
+                    )
                 }
             }
         }
@@ -297,8 +312,13 @@ fun EntryBrowserScreen(
         }
 
         // Count label
+        val sortLabel = if (filterBook != null) {
+            "${bookSortMode.label}${if (bookAsc) "↑" else "↓"}"
+        } else {
+            (if (globalNewest) "最新" else "最早") + (if (groupByBook) " · 按书" else "")
+        }
         Text(
-            "${filtered.size} 条 · ${if (filterBook == null && groupByBook) "按书分组" else sortMode.label}",
+            "${filtered.size} 条 · $sortLabel",
             fontSize = 11.sp,
             color = SumiSoft,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
@@ -373,6 +393,52 @@ fun EntryBrowserScreen(
 }
 
 @Composable
+private fun GlobalSortMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    newest: Boolean,
+    onNewest: (Boolean) -> Unit,
+    groupByBook: Boolean,
+    onGroupToggle: () -> Unit,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text(if (newest) "✓ 最新" else "　最新", fontSize = 13.sp) },
+            onClick = { onNewest(true) },
+        )
+        DropdownMenuItem(
+            text = { Text(if (!newest) "✓ 最早" else "　最早", fontSize = 13.sp) },
+            onClick = { onNewest(false) },
+        )
+        androidx.compose.material3.HorizontalDivider()
+        DropdownMenuItem(
+            text = { Text(if (groupByBook) "✓ 按书分组" else "　按书分组", fontSize = 13.sp) },
+            onClick = onGroupToggle,
+        )
+    }
+}
+
+@Composable
+private fun BookSortMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    mode: EntrySortMode,
+    asc: Boolean,
+    onSelect: (EntrySortMode) -> Unit,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        EntrySortMode.entries.forEach { m ->
+            val selected = m == mode
+            val arrow = if (selected) (if (asc) " ↑" else " ↓") else ""
+            DropdownMenuItem(
+                text = { Text((if (selected) "✓ " else "　") + m.label + arrow, fontSize = 13.sp) },
+                onClick = { onSelect(m) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun EntryCard(
     item: BrowsableEntry,
     showBook: Boolean,
@@ -410,12 +476,24 @@ private fun EntryCard(
             )
         }
         Spacer(Modifier.height(6.dp))
-        EntryHtmlWebView(
-            excerpt = item.entry.text,
-            annotation = item.entry.annotation,
-            colors = colors,
-            modifier = Modifier.fillMaxWidth().height(110.dp),
-        )
+        Box {
+            EntryHtmlWebView(
+                excerpt = item.entry.text,
+                annotation = item.entry.annotation,
+                colors = colors,
+                modifier = Modifier.fillMaxWidth().height(110.dp),
+            )
+            // WebView swallows touches; this transparent layer keeps the whole card tappable.
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onClick,
+                    ),
+            )
+        }
         // Tags
         if (item.entry.tags.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))

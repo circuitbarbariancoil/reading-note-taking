@@ -15,6 +15,22 @@
       }
       .box:focus-within { border-color: #3C5468; box-shadow: 0 0 0 3px #3C546820; }
       .cm-editor { background: transparent; }
+      .cm-tooltip.cm-tooltip-autocomplete {
+        background: #FBF7EC; border: 1px solid #DAD2C0; border-radius: 10px;
+        box-shadow: 0 4px 14px rgba(33,30,26,.12); overflow: hidden;
+      }
+      .cm-tooltip.cm-tooltip-autocomplete > ul {
+        font-family: "Noto Sans CJK JP", sans-serif; font-size: 13px;
+        max-height: 180px; padding: 4px 0;
+      }
+      .cm-tooltip.cm-tooltip-autocomplete > ul > li {
+        color: #211E1A; padding: 6px 14px; line-height: 1.4;
+      }
+      .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+        background: #EDE6D6; color: #211E1A;
+      }
+      .cm-completionMatchedText { text-decoration: none; color: #3C5468; font-weight: 600; }
+      .cm-completionIcon { display: none; }
     </style>
   </head>
   <body>
