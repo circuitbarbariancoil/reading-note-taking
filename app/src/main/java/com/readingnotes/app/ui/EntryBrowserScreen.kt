@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,9 +51,9 @@ data class BrowsableEntry(
 )
 
 enum class EntrySortMode(val label: String) {
-    Time("时间"),
-    Page("页码"),
-    Book("书名"),
+    Time("按时间"),
+    Page("按页序"),
+    Book("按书名"),
 }
 
 /**
@@ -73,10 +74,15 @@ fun EntryBrowserScreen(
     var filterBook by remember(filterBookUid) { mutableStateOf(filterBookUid) }
     var filterColor by remember { mutableStateOf<String?>(null) }
     var filterTag by remember { mutableStateOf<String?>(null) }
+    var sortExpanded by remember { mutableStateOf(false) }
+    var bookExpanded by remember { mutableStateOf(false) }
 
     // All unique tags across entries
     val allTags = remember(entries) {
         entries.flatMap { it.entry.tags }.distinct().sorted()
+    }
+    val composeColors = remember(colors) {
+        colors.associate { hc -> hc.name to runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent) }
     }
 
     // Apply filters
@@ -112,16 +118,76 @@ fun EntryBrowserScreen(
             onBack,
         )
 
-        // Search bar
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text("搜索摘抄、批注…", fontSize = 13.sp, color = SumiSoft) },
-            singleLine = true,
+        Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("搜索摘抄、批注…", fontSize = 13.sp, color = SumiSoft) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Box {
+                FilterChip(
+                    label = sortMode.label,
+                    selected = false,
+                    onClick = { sortExpanded = true },
+                )
+                DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
+                    EntrySortMode.entries.forEach { mode ->
+                        DropdownMenuItem(
+                            text = { Text(mode.label) },
+                            onClick = {
+                                sortMode = mode
+                                sortExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        if (filterBookUid == null && books.isNotEmpty()) {
+            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                FilterChip(
+                    label = filterBook?.let { uid ->
+                        val book = books.find { it.uid == uid }
+                        if (book != null) "${book.title} (${book.entries.size})" else "全部书"
+                    } ?: "全部书",
+                    selected = filterBook != null,
+                    onClick = { bookExpanded = true },
+                )
+                DropdownMenu(expanded = bookExpanded, onDismissRequest = { bookExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("全部书") },
+                        onClick = {
+                            filterBook = null
+                            bookExpanded = false
+                        },
+                    )
+                    books.forEach { book ->
+                        DropdownMenuItem(
+                            text = { Text("${book.title} (${book.entries.size})") },
+                            onClick = {
+                                filterBook = book.uid
+                                bookExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        Text(
+            "筛选",
+            fontSize = 11.sp,
+            color = SumiSoft,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
         )
 
-        // Filter chips row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -130,35 +196,6 @@ fun EntryBrowserScreen(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Sort chips
-            EntrySortMode.entries.forEach { mode ->
-                FilterChip(
-                    label = mode.label,
-                    selected = sortMode == mode,
-                    onClick = { sortMode = mode },
-                )
-            }
-
-            Spacer(Modifier.width(8.dp))
-
-            // Book filter (only in global mode)
-            if (filterBookUid == null && books.size > 1) {
-                FilterChip(
-                    label = filterBook?.let { uid -> books.find { it.uid == uid }?.title?.take(6) ?: "书" } ?: "全部书",
-                    selected = filterBook != null,
-                    onClick = {
-                        // Cycle through books then back to null (all)
-                        val idx = books.indexOfFirst { it.uid == filterBook }
-                        filterBook = if (idx < 0 || idx >= books.lastIndex) {
-                            if (filterBook == null) books.firstOrNull()?.uid else null
-                        } else {
-                            books[idx + 1].uid
-                        }
-                    },
-                )
-            }
-
-            // Color filter
             colors.forEach { hc ->
                 val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
                 FilterChip(
@@ -168,8 +205,6 @@ fun EntryBrowserScreen(
                     tint = tint,
                 )
             }
-
-            // Tag filter
             allTags.take(10).forEach { tag ->
                 FilterChip(
                     label = "#$tag",
@@ -199,7 +234,7 @@ fun EntryBrowserScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 items(filtered, key = { it.entry.id }) { item ->
-                    EntryCard(item, showBook = filterBookUid == null, onClick = { onEntryClick(item) })
+                    EntryCard(item, showBook = filterBookUid == null, onClick = { onEntryClick(item) }, colors = composeColors)
                 }
             }
         }
@@ -210,6 +245,7 @@ fun EntryBrowserScreen(
 private fun EntryCard(
     item: BrowsableEntry,
     showBook: Boolean,
+    colors: Map<String, Color>,
     onClick: () -> Unit,
 ) {
     Column(
@@ -243,25 +279,12 @@ private fun EntryCard(
             )
         }
         Spacer(Modifier.height(6.dp))
-        // Main text (strip markup for display)
-        Text(
-            stripMarkup(item.entry.text),
-            fontFamily = FontFamily.Serif,
-            fontSize = 14.sp,
-            color = Sumi,
-            maxLines = 4,
-            overflow = TextOverflow.Ellipsis,
+        EntryHtmlWebView(
+            excerpt = item.entry.text,
+            annotation = item.entry.annotation,
+            colors = colors,
+            modifier = Modifier.fillMaxWidth().height(110.dp),
         )
-        if (item.entry.annotation.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                item.entry.annotation,
-                fontSize = 12.sp,
-                color = SumiSoft,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
         // Tags
         if (item.entry.tags.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
@@ -299,13 +322,4 @@ private fun FilterChip(
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
-}
-
-/** Strip common markup tokens for display purposes. */
-private fun stripMarkup(text: String): String {
-    return text
-        .replace(Regex("~=\\{[^}]*\\}"), "")
-        .replace("=~", "")
-        .replace("**", "")
-        .replace(Regex("\\u300A([^\\u300B]*)\\u300B"), "$1")
 }

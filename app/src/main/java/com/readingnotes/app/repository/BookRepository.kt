@@ -47,7 +47,7 @@ class BookRepository(
         geminiApiKey: String,
         dropboxCredentialJson: String,
         bookTitle: String,
-        onApiCall: () -> Unit = {},
+        onApiCall: (String?) -> Unit = { _ -> },
     ): CaptureResult = withContext(Dispatchers.IO) {
         mutex.withLock {
             val sourceBitmap = ImageProcessing.decode(sourceBytes)
@@ -59,7 +59,7 @@ class BookRepository(
             val archiveRelativePath = "pages/p%04d_archive.webp".format(nextPageNumber)
             val now = utcNow()
 
-            onApiCall()
+            onApiCall(null)
             val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
             val extractedPageNum = extractPageNumber(ocrText)
             val pageNumber = extractedPageNum ?: nextPageNumber
@@ -196,7 +196,7 @@ class BookRepository(
         manualPageNumber: Int? = null,
         precomputedOcrText: String? = null,
         providerConfig: ProviderConfig? = null,
-        onApiCall: () -> Unit = {},
+        onApiCall: (String?) -> Unit = { _ -> },
     ): ProcessOutcome = withContext(Dispatchers.IO) {
         val ocrText = precomputedOcrText ?: run {
             val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(capture.imagePath).readBytes()))
@@ -252,7 +252,7 @@ class BookRepository(
         page: Page,
         geminiApiKey: String,
         providerConfig: ProviderConfig? = null,
-        onApiCall: () -> Unit = {},
+        onApiCall: (String?) -> Unit = { _ -> },
     ): Book = withContext(Dispatchers.IO) {
         val imagePath = archiveImagePath(book, page)
             ?: throw IllegalStateException("此页没有原始图片，无法 OCR")
@@ -514,13 +514,13 @@ class BookRepository(
         ocrJpeg: ByteArray,
         legacyApiKey: String,
         providerConfig: ProviderConfig?,
-        onApiCall: () -> Unit = {},
+        onApiCall: (String?) -> Unit = { _ -> },
     ): String {
         val config = providerConfig?.takeIf { it.providers.isNotEmpty() }
         return if (config != null) {
             OcrDispatcher(config).ocrPage(ocrJpeg, onApiCall).text
         } else {
-            onApiCall()
+            onApiCall(null)
             GeminiOcrClient(legacyApiKey).ocrPage(ocrJpeg)
         }
     }

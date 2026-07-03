@@ -8,6 +8,8 @@ import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.ocr.LlmProvider
 import com.readingnotes.app.ocr.ProviderConfig
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import java.time.Instant
 import java.time.YearMonth
@@ -21,12 +23,21 @@ data class ApiUsageStats(
     val lastCallAt: String? = null,
 )
 
+@Serializable
+data class ProviderUsageStats(
+    val totalCalls: Int = 0,
+    val monthCalls: Int = 0,
+    val monthKey: String = "",
+    val lastCallAt: String? = null,
+)
+
 data class AppSettings(
     val geminiApiKey: String? = null,
     val dropboxCredentialJson: String? = null,
     val bookTitle: String = DEFAULT_BOOK_TITLE,
     val palette: HighlightPalette = HighlightPalette.DEFAULT,
     val apiUsage: ApiUsageStats = ApiUsageStats(),
+    val providerApiUsage: Map<String, ProviderUsageStats> = emptyMap(),
     val maxOcrRetries: Int = 3,
     val monthlyApiBudget: Int = 0,
     val providerConfig: ProviderConfig = ProviderConfig(),
@@ -72,6 +83,7 @@ class SettingsStore(context: Context) {
                 .ifBlank { AppSettings.DEFAULT_BOOK_TITLE },
             palette = readPalette(),
             apiUsage = readApiUsage(),
+            providerApiUsage = readProviderApiUsage(),
             maxOcrRetries = prefs.getInt(KEY_MAX_OCR_RETRIES, 3).coerceIn(0, 10),
             monthlyApiBudget = prefs.getInt(KEY_MONTHLY_API_BUDGET, 0).coerceAtLeast(0),
             providerConfig = effectiveConfig,
@@ -97,18 +109,30 @@ class SettingsStore(context: Context) {
     }
 
     @Synchronized
-    fun recordApiCall() {
+    fun recordApiCall(providerId: String? = null) {
         val current = readApiUsage()
         val monthKey = YearMonth.now(ZoneOffset.UTC).toString()
         val resetMonthCalls = if (current.monthKey == monthKey) current.monthCalls else 0
-        saveApiUsage(
-            current.copy(
-                totalCalls = current.totalCalls + 1,
-                monthCalls = resetMonthCalls + 1,
-                monthKey = monthKey,
-                lastCallAt = Instant.now().toString(),
-            )
+        val timestamp = Instant.now().toString()
+        val updatedUsage = current.copy(
+            totalCalls = current.totalCalls + 1,
+            monthCalls = resetMonthCalls + 1,
+            monthKey = monthKey,
+            lastCallAt = timestamp,
         )
+        saveApiUsage(updatedUsage)
+        if (providerId != null) {
+            val providerUsage = readProviderApiUsage().toMutableMap()
+            val providerCurrent = providerUsage[providerId] ?: ProviderUsageStats()
+            val providerResetMonthCalls = if (providerCurrent.monthKey == monthKey) providerCurrent.monthCalls else 0
+            providerUsage[providerId] = providerCurrent.copy(
+                totalCalls = providerCurrent.totalCalls + 1,
+                monthCalls = providerResetMonthCalls + 1,
+                monthKey = monthKey,
+                lastCallAt = timestamp,
+            )
+            saveProviderApiUsage(providerUsage)
+        }
     }
 
     fun saveGeminiApiKey(value: String) {
@@ -160,6 +184,19 @@ class SettingsStore(context: Context) {
             .getOrDefault(ApiUsageStats())
     }
 
+    private fun readProviderApiUsage(): Map<String, ProviderUsageStats> {
+        val raw = prefs.getString(KEY_PROVIDER_API_USAGE, null) ?: return emptyMap()
+        return runCatching {
+            json.decodeFromString(MapSerializer(String.serializer(), ProviderUsageStats.serializer()), raw)
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun saveProviderApiUsage(stats: Map<String, ProviderUsageStats>) {
+        prefs.edit()
+            .putString(KEY_PROVIDER_API_USAGE, json.encodeToString(MapSerializer(String.serializer(), ProviderUsageStats.serializer()), stats))
+            .apply()
+    }
+
     companion object {
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private const val PREFS_NAME = "secure_settings"
@@ -168,6 +205,7 @@ class SettingsStore(context: Context) {
         private const val KEY_BOOK_TITLE = "book_title"
         private const val KEY_HIGHLIGHT_PALETTE = "highlight_palette"
         private const val KEY_API_USAGE = "api_usage"
+        private const val KEY_PROVIDER_API_USAGE = "provider_api_usage"
         private const val KEY_MAX_OCR_RETRIES = "max_ocr_retries"
         private const val KEY_MONTHLY_API_BUDGET = "monthly_api_budget"
         private const val KEY_PROVIDER_CONFIG = "provider_config"

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -61,10 +62,16 @@ fun EntryEditor(
     knownTags: List<String>,
     onSave: (Entry) -> Unit,
     onDismiss: () -> Unit,
+    onViewOriginal: () -> Unit = {},
 ) {
     val currentEntry = rememberUpdatedState(entry)
     val currentOnSave = rememberUpdatedState(onSave)
     var webView by remember { mutableStateOf<WebView?>(null) }
+    val colorMap = remember(palette) {
+        palette.colors.associate { hc ->
+            hc.name to runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
+        }
+    }
 
     val configJson = remember(entry, palette, knownTags) {
         JSONObject().apply {
@@ -96,6 +103,12 @@ fun EntryEditor(
                 Text("p.${entry.page}", fontSize = 12.sp, color = SumiSoft)
             }
             Text(
+                "查看原文",
+                fontSize = 13.sp,
+                color = SumiSoft,
+                modifier = Modifier.clickable(onClick = onViewOriginal).padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            Text(
                 "完成", fontSize = 15.sp, color = Accent,
                 modifier = Modifier
                     .clickable { webView?.evaluateJavascript("window.RN && RN.collect();", null) }
@@ -103,6 +116,13 @@ fun EntryEditor(
             )
         }
         Spacer(modifier = Modifier.fillMaxWidth().padding(0.dp).background(Hairline))
+
+        EntryHtmlWebView(
+            excerpt = entry.text,
+            annotation = entry.annotation,
+            colors = colorMap,
+            modifier = Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+        )
 
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),

@@ -83,6 +83,8 @@ fun WorkbenchScreen(
     onRetryProcessItem: (ProcessItem) -> Unit = {},
     onFillProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
+    batchProcessItems: List<ProcessItem> = emptyList(),
+    onClearBatchProcessItems: () -> Unit = {},
 ) {
     var book by remember(initialBook) { mutableStateOf(initialBook) }
     var pageIndex by remember(initialBook, initialPageIndex) { mutableStateOf(initialPageIndex) }
@@ -218,14 +220,29 @@ fun WorkbenchScreen(
             }
         }
 
-        if (processItems.isNotEmpty()) {
-            ProcessingQueueCard(
-                items = processItems,
-                onRetry = onRetryProcessItem,
-                onFillPage = onFillProcessItem,
-                onDismiss = onDismissProcessItem,
+        if (processItems.isNotEmpty() || batchProcessItems.isNotEmpty()) {
+            Column(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
-            )
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (batchProcessItems.isNotEmpty()) {
+                    BatchProcessingQueueCard(
+                        items = batchProcessItems,
+                        onRetry = onRetryProcessItem,
+                        onFillPage = onFillProcessItem,
+                        onDismiss = onDismissProcessItem,
+                        onClearCompleted = onClearBatchProcessItems,
+                    )
+                }
+                if (processItems.isNotEmpty()) {
+                    ProcessingQueueCard(
+                        items = processItems,
+                        onRetry = onRetryProcessItem,
+                        onFillPage = onFillProcessItem,
+                        onDismiss = onDismissProcessItem,
+                    )
+                }
+            }
         }
     }
 

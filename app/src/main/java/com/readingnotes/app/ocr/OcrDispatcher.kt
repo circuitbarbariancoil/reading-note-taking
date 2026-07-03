@@ -14,7 +14,7 @@ class OcrDispatcher(private val config: ProviderConfig) {
      * Returns the recognized text.
      * Throws [GeminiOcrClient.OcrException] if all providers fail.
      */
-    suspend fun ocrPage(jpegBytes: ByteArray, onApiCall: () -> Unit = {}): OcrResult {
+    suspend fun ocrPage(jpegBytes: ByteArray, onApiCall: (String?) -> Unit = { _ -> }): OcrResult {
         val startIndex = if (config.roundRobin) {
             config.nextIndex(lastUsedIndex) ?: config.activeIndex
         } else {
@@ -40,7 +40,7 @@ class OcrDispatcher(private val config: ProviderConfig) {
             }
 
             try {
-                onApiCall()
+                onApiCall(provider.id)
                 val text = callProvider(provider, jpegBytes)
                 lastUsedIndex = currentIndex
                 return OcrResult(text = text, providerName = provider.name, model = provider.model)

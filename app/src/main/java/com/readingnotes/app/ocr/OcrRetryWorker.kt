@@ -45,7 +45,7 @@ class OcrRetryWorker(
                     capture = capture,
                     geminiApiKey = settings.geminiApiKey.orEmpty(),
                     providerConfig = settings.providerConfig,
-                    onApiCall = { settingsStore.recordApiCall() },
+                    onApiCall = { providerId -> settingsStore.recordApiCall(providerId) },
                 )
             } else if (pageNumber >= 0) {
                 // Retry OCR for an existing page
@@ -55,7 +55,7 @@ class OcrRetryWorker(
                     page = page,
                     geminiApiKey = settings.geminiApiKey.orEmpty(),
                     providerConfig = settings.providerConfig,
-                    onApiCall = { settingsStore.recordApiCall() },
+                    onApiCall = { providerId -> settingsStore.recordApiCall(providerId) },
                 )
             }
             Result.success()

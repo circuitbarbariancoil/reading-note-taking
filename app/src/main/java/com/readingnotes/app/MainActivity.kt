@@ -1,25 +1,41 @@
 package com.readingnotes.app
 
 import android.os.Bundle
+import android.graphics.BitmapFactory
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.lifecycleScope
 import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.android.Auth
@@ -38,6 +54,7 @@ import com.readingnotes.app.ui.BrowsableEntry
 import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.EntryBrowserScreen
 import com.readingnotes.app.ocr.OcrRetryWorker
+import com.readingnotes.app.ui.EntryEditor
 import com.readingnotes.app.ui.OcrJobState
 import com.readingnotes.app.ui.ProcessItem
 import com.readingnotes.app.ui.ProcessStep
@@ -58,10 +75,13 @@ private enum class ShellScreen {
     Workbench,
     Palette,
     EntryBrowser,
+    EntryEditor,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
 private data class PendingPageNumber(val capture: Capture, val ocrText: String)
+
+private data class EntryEditTarget(val bookUid: String, val entryId: String)
 
 class MainActivity : ComponentActivity() {
     private lateinit var settingsStore: SettingsStore
@@ -75,7 +95,10 @@ class MainActivity : ComponentActivity() {
     /** OCR job status keyed by capture id (or "page-N" for re-OCR of a page). */
     private val ocrStatus = mutableStateMapOf<String, OcrJobState>()
     private val processQueue = mutableStateListOf<ProcessItem>()
+    private val batchProcessQueue = mutableStateListOf<ProcessItem>()
     private var pendingPageNumber by mutableStateOf<PendingPageNumber?>(null)
+    private var entryEditTarget by mutableStateOf<EntryEditTarget?>(null)
+    private var entryEditorFromBrowser by mutableStateOf(false)
     private var ocrErrorMessage by mutableStateOf<String?>(null)
     private var entryBrowserBookUid by mutableStateOf<String?>(null)
 
@@ -105,6 +128,7 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled = currentScreen != ShellScreen.BookShelf) {
             currentScreen = when (currentScreen) {
                 ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser -> ShellScreen.BookShelf
+                ShellScreen.EntryEditor -> if (entryEditorFromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
                 ShellScreen.Capture -> if (captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
@@ -141,6 +165,7 @@ class MainActivity : ComponentActivity() {
                         repository = bookRepository,
                         ocrStatus = ocrStatus,
                         processItems = processQueue,
+                        batchProcessItems = batchProcessQueue,
                         onOpenPage = { page ->
                             activePageIndex = book.pages.indexOf(page).coerceAtLeast(0)
                             currentScreen = ShellScreen.Workbench
@@ -152,6 +177,7 @@ class MainActivity : ComponentActivity() {
                         onRetryProcessItem = { item -> retryProcessItem(item) },
                         onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
+                        onClearBatchProcessItems = { clearBatchProcessQueue() },
                         onAssignPage = { capture, pageNumber -> assignPage(capture, pageNumber) },
                         onFillPageNumber = { capture ->
                             capture.ocrText?.let { pendingPageNumber = PendingPageNumber(capture, it) }
@@ -184,9 +210,8 @@ class MainActivity : ComponentActivity() {
 
             ShellScreen.Settings -> SettingsScreen(
                 settings = appSettings,
-                onSave = { geminiKey, bookTitle, maxRetries, monthlyBudget ->
+                onSave = { geminiKey, maxRetries, monthlyBudget ->
                     settingsStore.saveGeminiApiKey(geminiKey)
-                    settingsStore.saveBookTitle(bookTitle)
                     settingsStore.saveMaxOcrRetries(maxRetries)
                     settingsStore.saveMonthlyApiBudget(monthlyBudget)
                     appSettings = settingsStore.read()
@@ -202,6 +227,7 @@ class MainActivity : ComponentActivity() {
 
             ShellScreen.ProviderSettings -> ProviderSettingsScreen(
                 config = appSettings.providerConfig,
+                usage = appSettings.providerApiUsage,
                 onSave = { config ->
                     settingsStore.saveProviderConfig(config)
                     appSettings = settingsStore.read()
@@ -231,9 +257,11 @@ class MainActivity : ComponentActivity() {
                         onOcrPage = { page -> ocrPage(page) },
                         onChangePageNumber = { page, newNumber -> changePageNumber(page, newNumber) },
                         processItems = processQueue,
+                        batchProcessItems = batchProcessQueue,
                         onRetryProcessItem = { item -> retryProcessItem(item) },
                         onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
+                        onClearBatchProcessItems = { clearBatchProcessQueue() },
                     )
                 }
             }
@@ -265,15 +293,57 @@ class MainActivity : ComponentActivity() {
                         if (book != null) {
                             activeBook = book
                             activePageIndex = book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0)
-                            currentScreen = ShellScreen.Workbench
+                            entryEditorFromBrowser = true
+                            entryEditTarget = EntryEditTarget(book.uid, item.entry.id)
+                            currentScreen = ShellScreen.EntryEditor
                         }
                     },
                 )
+            }
+
+            ShellScreen.EntryEditor -> {
+                val book = activeBook
+                val target = entryEditTarget
+                if (book == null || target == null) {
+                    currentScreen = ShellScreen.BookShelf
+                } else {
+                    val entry = book.entries.firstOrNull { it.id == target.entryId }
+                    if (entry == null) {
+                        currentScreen = ShellScreen.BookShelf
+                    } else {
+                        val pageIndex = book.pages.indexOfFirst { it.page == entry.page }.coerceAtLeast(0)
+                        EntryEditor(
+                            entry = entry,
+                            palette = appSettings.palette,
+                            knownTags = book.entries.flatMap { it.tags }.distinct().sorted(),
+                            onSave = { updated ->
+                                lifecycleScope.launch {
+                                    val updatedBook = book.copy(
+                                        entries = book.entries.map { if (it.id == updated.id) updated else it },
+                                    )
+                                    activeBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
+                                }
+                            },
+                            onDismiss = {
+                                val fromBrowser = entryEditorFromBrowser
+                                entryEditTarget = null
+                                entryEditorFromBrowser = false
+                                currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
+                            },
+                            onViewOriginal = {
+                                activePageIndex = pageIndex
+                                currentScreen = ShellScreen.Workbench
+                            },
+                        )
+                    }
+                }
             }
         }
 
         pendingPageNumber?.let { pending ->
             PageNumberDialog(
+                captureImagePath = pending.capture.imagePath,
+                ocrText = pending.ocrText,
                 onConfirm = { pageNumber ->
                     pendingPageNumber = null
                     finishWithManualPageNumber(pending, pageNumber)
@@ -292,7 +362,7 @@ class MainActivity : ComponentActivity() {
     private fun saveShot(bytes: ByteArray) {
         val book = activeBook ?: return
         val tempId = "shot-${captureShotCount + 1}-${System.currentTimeMillis()}"
-        upsertProcessItem(tempId, ProcessStep.Saving)
+        upsertProcessItem(processQueue, tempId, ProcessStep.Saving)
         captureSaving = true
         lifecycleScope.launch {
             try {
@@ -300,19 +370,19 @@ class MainActivity : ComponentActivity() {
                 val newCapture = updated.captures.last()
                 activeBook = updated
                 captureShotCount++
-                replaceProcessItem(tempId, newCapture.id, ProcessStep.Saving)
+                replaceProcessItem(processQueue, tempId, newCapture.id, ProcessStep.Saving)
                 if (captureFromWorkbench) {
                     // Immersive flow: one shot, back to the workbench, OCR in background.
                     currentScreen = ShellScreen.Workbench
                     if (isMonthlyApiBudgetExceeded()) {
                         showMonthlyApiBudgetError()
-                        upsertProcessItem(newCapture.id, ProcessStep.Done)
+                        upsertProcessItem(processQueue, newCapture.id, ProcessStep.Done)
                     } else {
-                        upsertProcessItem(newCapture.id, ProcessStep.Ocr)
+                        upsertProcessItem(processQueue, newCapture.id, ProcessStep.Ocr)
                         ocrCapture(newCapture, jumpToPage = true)
                     }
                 } else {
-                    upsertProcessItem(newCapture.id, ProcessStep.Done)
+                    upsertProcessItem(processQueue, newCapture.id, ProcessStep.Done)
                 }
             } finally {
                 captureSaving = false
@@ -333,11 +403,11 @@ class MainActivity : ComponentActivity() {
         val book = activeBook ?: return
         if (key.isNullOrBlank()) {
             ocrStatus[capture.id] = OcrJobState.Failed
-            upsertProcessItem(capture.id, ProcessStep.Failed, message = "未设置 API Key")
+            upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = "未设置 API Key")
             return
         }
         ocrStatus[capture.id] = OcrJobState.Running
-        upsertProcessItem(capture.id, ProcessStep.Ocr)
+        upsertProcessItem(processQueue, capture.id, ProcessStep.Ocr)
         try {
             when (val outcome = bookRepository.processCapture(
                 book,
@@ -345,11 +415,11 @@ class MainActivity : ComponentActivity() {
                 key,
                 precomputedOcrText = capture.ocrText,
                 providerConfig = appSettings.providerConfig,
-                onApiCall = { recordApiCall() },
+                onApiCall = { providerId -> recordApiCall(providerId) },
             )) {
                 is ProcessOutcome.Done -> {
                     ocrStatus.remove(capture.id)
-                    upsertProcessItem(capture.id, ProcessStep.Done, pageNumber = outcome.page.page)
+                    upsertProcessItem(processQueue, capture.id, ProcessStep.Done, pageNumber = outcome.page.page)
                     activeBook = outcome.book
                     if (jumpToPage) {
                         activePageIndex = outcome.book.pages
@@ -361,7 +431,7 @@ class MainActivity : ComponentActivity() {
 
                 is ProcessOutcome.NeedsPageNumber -> {
                     ocrStatus.remove(capture.id)
-                    upsertProcessItem(capture.id, ProcessStep.NeedsPage, message = outcome.ocrText)
+                    upsertProcessItem(processQueue, capture.id, ProcessStep.NeedsPage, message = outcome.ocrText)
                     // Keep the recognized text so 稍后处理 doesn't lose or re-bill it.
                     activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
                     pendingPageNumber = PendingPageNumber(capture, outcome.ocrText)
@@ -370,7 +440,7 @@ class MainActivity : ComponentActivity() {
         } catch (t: Throwable) {
             ocrStatus[capture.id] = OcrJobState.Failed
             ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
-            upsertProcessItem(capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
+            upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
             // Enqueue for background retry
             OcrRetryWorker.enqueueCaptureOcr(this@MainActivity, book.uid, capture.id)
         }
@@ -388,16 +458,17 @@ class MainActivity : ComponentActivity() {
                     manualPageNumber = pageNumber,
                     precomputedOcrText = pending.ocrText,
                     providerConfig = appSettings.providerConfig,
-                    onApiCall = { recordApiCall() },
+                    onApiCall = { providerId -> recordApiCall(providerId) },
                 )
                 if (outcome is ProcessOutcome.Done) {
                     activeBook = outcome.book
-                    upsertProcessItem(pending.capture.id, ProcessStep.Done, pageNumber = outcome.page.page)
+                    val targetList = if (batchProcessQueue.any { it.id == pending.capture.id }) batchProcessQueue else processQueue
+                    upsertProcessItem(targetList, pending.capture.id, ProcessStep.Done, pageNumber = outcome.page.page, autoRemoveDone = targetList !== processQueue)
                     syncToDropbox(outcome.book)
                 }
             } catch (t: Throwable) {
                 ocrStatus[pending.capture.id] = OcrJobState.Failed
-                upsertProcessItem(pending.capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
+                upsertProcessItem(processQueue, pending.capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
             }
         }
     }
@@ -408,20 +479,58 @@ class MainActivity : ComponentActivity() {
             return
         }
         lifecycleScope.launch {
-            // Sequential: one Gemini call at a time; statuses drive the UI badges.
-            val attempted = mutableSetOf<String>()
-            while (true) {
-                val next = activeBook?.captures?.firstOrNull {
-                    it.ocrText == null && it.id !in attempted && ocrStatus[it.id] != OcrJobState.Failed
-                } ?: break
+            val pendingCaptures = activeBook?.captures?.filter { it.ocrText == null }.orEmpty()
+            batchProcessQueue.clear()
+            pendingCaptures.forEach { capture ->
+                upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Queued, autoRemoveDone = false)
+            }
+            for (capture in pendingCaptures) {
                 if (isMonthlyApiBudgetExceeded()) {
                     showMonthlyApiBudgetError()
                     break
                 }
-                attempted.add(next.id)
-                runOcrCapture(next, jumpToPage = false)
-                if (ocrStatus[next.id] == OcrJobState.Failed) break
+                runBatchOcrCapture(capture)
             }
+        }
+    }
+
+    private suspend fun runBatchOcrCapture(capture: Capture) {
+        val key = appSettings.geminiApiKey
+        val book = activeBook ?: return
+        if (key.isNullOrBlank()) {
+            ocrStatus[capture.id] = OcrJobState.Failed
+            upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Failed, message = "未设置 API Key", autoRemoveDone = false)
+            return
+        }
+        ocrStatus[capture.id] = OcrJobState.Running
+        upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Ocr, autoRemoveDone = false)
+        try {
+            when (val outcome = bookRepository.processCapture(
+                book,
+                capture,
+                key,
+                precomputedOcrText = capture.ocrText,
+                providerConfig = appSettings.providerConfig,
+                onApiCall = { providerId -> recordApiCall(providerId) },
+            )) {
+                is ProcessOutcome.Done -> {
+                    ocrStatus.remove(capture.id)
+                    upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Done, pageNumber = outcome.page.page, autoRemoveDone = false)
+                    activeBook = outcome.book
+                    syncToDropbox(outcome.book)
+                }
+
+                is ProcessOutcome.NeedsPageNumber -> {
+                    ocrStatus.remove(capture.id)
+                    upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.NeedsPage, message = outcome.ocrText, autoRemoveDone = false)
+                    activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
+                }
+            }
+        } catch (t: Throwable) {
+            ocrStatus[capture.id] = OcrJobState.Failed
+            ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
+            upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误", autoRemoveDone = false)
+            OcrRetryWorker.enqueueCaptureOcr(this@MainActivity, book.uid, capture.id)
         }
     }
 
@@ -437,7 +546,7 @@ class MainActivity : ComponentActivity() {
                     manualPageNumber = pageNumber,
                     precomputedOcrText = ocrText,
                     providerConfig = appSettings.providerConfig,
-                    onApiCall = { recordApiCall() },
+                    onApiCall = { providerId -> recordApiCall(providerId) },
                 )
                 (outcome as ProcessOutcome.Done).book
             } else {
@@ -460,8 +569,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun recordApiCall() {
-        settingsStore.recordApiCall()
+    private fun recordApiCall(providerId: String? = null) {
+        settingsStore.recordApiCall(providerId)
         lifecycleScope.launch {
             appSettings = settingsStore.read()
         }
@@ -478,10 +587,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun upsertProcessItem(
+        list: MutableList<ProcessItem>,
         id: String,
         step: ProcessStep,
         pageNumber: Int? = null,
         message: String? = null,
+        autoRemoveDone: Boolean = true,
     ) {
         val item = ProcessItem(
             id = id,
@@ -489,48 +600,50 @@ class MainActivity : ComponentActivity() {
             pageNumber = pageNumber,
             message = message,
         )
-        val index = processQueue.indexOfFirst { it.id == id }
-        if (index >= 0) processQueue[index] = item else processQueue.add(item)
-        if (step == ProcessStep.Done) {
-            scheduleProcessRemoval(item)
+        val index = list.indexOfFirst { it.id == id }
+        if (index >= 0) list[index] = item else list.add(item)
+        if (autoRemoveDone && step == ProcessStep.Done) {
+            scheduleProcessRemoval(list, item)
         }
     }
 
     private fun replaceProcessItem(
+        list: MutableList<ProcessItem>,
         oldId: String,
         newId: String,
         step: ProcessStep,
         pageNumber: Int? = null,
         message: String? = null,
+        autoRemoveDone: Boolean = true,
     ) {
-        val oldIndex = processQueue.indexOfFirst { it.id == oldId }
+        val oldIndex = list.indexOfFirst { it.id == oldId }
         if (oldIndex >= 0) {
-            processQueue.removeAt(oldIndex)
+            list.removeAt(oldIndex)
             val item = ProcessItem(
                 id = newId,
                 step = step,
                 pageNumber = pageNumber,
                 message = message,
             )
-            if (oldIndex <= processQueue.size) processQueue.add(oldIndex, item) else processQueue.add(item)
-            if (step == ProcessStep.Done) {
-                scheduleProcessRemoval(item)
+            if (oldIndex <= list.size) list.add(oldIndex, item) else list.add(item)
+            if (autoRemoveDone && step == ProcessStep.Done) {
+                scheduleProcessRemoval(list, item)
             }
         } else {
-            upsertProcessItem(newId, step, pageNumber, message)
+            upsertProcessItem(list, newId, step, pageNumber, message, autoRemoveDone)
         }
     }
 
-    private fun removeProcessItem(id: String) {
-        processQueue.removeAll { it.id == id }
+    private fun removeProcessItem(list: MutableList<ProcessItem>, id: String) {
+        list.removeAll { it.id == id }
     }
 
-    private fun scheduleProcessRemoval(item: ProcessItem) {
+    private fun scheduleProcessRemoval(list: MutableList<ProcessItem>, item: ProcessItem) {
         lifecycleScope.launch {
             kotlinx.coroutines.delay(4000)
-            val current = processQueue.firstOrNull { it.id == item.id } ?: return@launch
+            val current = list.firstOrNull { it.id == item.id } ?: return@launch
             if (current.step == ProcessStep.Done && current.updatedAt == item.updatedAt) {
-                removeProcessItem(item.id)
+                removeProcessItem(list, item.id)
             }
         }
     }
@@ -557,7 +670,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun dismissProcessItem(item: ProcessItem) {
-        removeProcessItem(item.id)
+        removeProcessItem(processQueue, item.id)
+        removeProcessItem(batchProcessQueue, item.id)
+    }
+
+    private fun clearBatchProcessQueue() {
+        batchProcessQueue.clear()
     }
 
     private fun deleteCapture(capture: Capture) {
@@ -577,28 +695,28 @@ class MainActivity : ComponentActivity() {
         }
         if (key.isNullOrBlank()) {
             ocrStatus[statusKey] = OcrJobState.Failed
-            upsertProcessItem(statusKey, ProcessStep.Failed, pageNumber = page.page, message = "未设置 API Key")
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, pageNumber = page.page, message = "未设置 API Key")
             return
         }
         lifecycleScope.launch {
             ocrStatus[statusKey] = OcrJobState.Running
-            upsertProcessItem(statusKey, ProcessStep.Ocr, pageNumber = page.page)
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Ocr, pageNumber = page.page)
             try {
                 val updated = bookRepository.ocrExistingPage(
                     book,
                     page,
                     key,
                     providerConfig = appSettings.providerConfig,
-                    onApiCall = { recordApiCall() },
+                    onApiCall = { providerId -> recordApiCall(providerId) },
                 )
                 ocrStatus.remove(statusKey)
                 activeBook = updated
-                upsertProcessItem(statusKey, ProcessStep.Done, pageNumber = page.page)
+                upsertProcessItem(processQueue, statusKey, ProcessStep.Done, pageNumber = page.page)
                 syncToDropbox(updated)
             } catch (t: Throwable) {
                 ocrStatus[statusKey] = OcrJobState.Failed
                 ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
-                upsertProcessItem(statusKey, ProcessStep.Failed, pageNumber = page.page, message = t.message?.take(80) ?: "未知错误")
+                upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, pageNumber = page.page, message = t.message?.take(80) ?: "未知错误")
                 // Enqueue for background retry
                 OcrRetryWorker.enqueuePageOcr(this@MainActivity, book.uid, page.page)
             }
@@ -632,16 +750,45 @@ class MainActivity : ComponentActivity() {
 
 @androidx.compose.runtime.Composable
 private fun PageNumberDialog(
+    captureImagePath: String,
+    ocrText: String,
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var pageNumText by androidx.compose.runtime.remember { mutableStateOf("") }
+    val bitmap = remember(captureImagePath) {
+        BitmapFactory.decodeFile(captureImagePath)
+    }
+    var enlarged by remember { mutableStateOf(false) }
+    val hintLines = remember(ocrText) {
+        ocrText.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .take(2)
+            .toList()
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("OCR 未识别出页码") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("这一页没有识别到页码，请手动填写：")
+                if (hintLines.isNotEmpty()) {
+                    Text(hintLines.joinToString(" / "), fontSize = 12.sp, color = com.readingnotes.app.ui.theme.SumiSoft)
+                }
+                bitmap?.let { bmp ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = com.readingnotes.app.ui.theme.Paper),
+                        modifier = Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable { enlarged = true },
+                    ) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "OCR 截图缩略图",
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = pageNumText,
                     onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
@@ -662,4 +809,17 @@ private fun PageNumberDialog(
             TextButton(onClick = onDismiss) { Text("稍后处理") }
         },
     )
+
+    if (enlarged && bitmap != null) {
+        Dialog(onDismissRequest = { enlarged = false }) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "OCR 截图原图",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        }
+    }
 }

@@ -40,12 +40,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.readingnotes.app.ocr.ApiProtocol
 import com.readingnotes.app.ocr.LlmProvider
 import com.readingnotes.app.ocr.ProviderConfig
+import com.readingnotes.app.settings.ProviderUsageStats
 import com.readingnotes.app.ui.theme.Accent
 import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
@@ -56,6 +56,7 @@ import java.util.UUID
 @Composable
 fun ProviderSettingsScreen(
     config: ProviderConfig,
+    usage: Map<String, ProviderUsageStats>,
     onSave: (ProviderConfig) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -79,6 +80,7 @@ fun ProviderSettingsScreen(
             itemsIndexed(providers, key = { _, p -> p.id }) { index, provider ->
                 ProviderCard(
                     provider = provider,
+                    usage = usage[provider.id] ?: ProviderUsageStats(),
                     isActive = index == activeIndex,
                     onSetActive = {
                         activeIndex = index
@@ -153,6 +155,7 @@ fun ProviderSettingsScreen(
 @Composable
 private fun ProviderCard(
     provider: LlmProvider,
+    usage: ProviderUsageStats,
     isActive: Boolean,
     onSetActive: () -> Unit,
     onEdit: () -> Unit,
@@ -181,6 +184,11 @@ private fun ProviderCard(
             Text(provider.name, fontSize = 14.sp, color = Sumi)
             Text(
                 "${provider.protocol.name} · ${provider.model}",
+                fontSize = 11.sp,
+                color = SumiSoft,
+            )
+            Text(
+                "本月 ${usage.monthCalls} 次 · 累计 ${usage.totalCalls} 次",
                 fontSize = 11.sp,
                 color = SumiSoft,
             )
@@ -285,7 +293,6 @@ private fun EditProviderDialog(
                     onValueChange = { apiKey = it },
                     label = { Text("API Key") },
                     singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
