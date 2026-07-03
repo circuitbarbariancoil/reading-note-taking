@@ -1,6 +1,7 @@
 package com.readingnotes.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -12,10 +13,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -57,8 +60,9 @@ enum class EntrySortMode(val label: String) {
 }
 
 /**
- * A full-screen entry browser. Shows all entries across books (global mode) or
- * filtered to a single book. Supports search, sort, and color/tag filtering.
+ * The unified full-screen entry browser. Book scope is just a pre-applied,
+ * removable filter: entering from a book seeds the book filter pill, which the
+ * user can clear to widen to all books. Supports search, sort, and color/tag filtering.
  */
 @Composable
 fun EntryBrowserScreen(
@@ -113,10 +117,7 @@ fun EntryBrowserScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Paper)) {
-        ScreenHeader(
-            if (filterBookUid != null) "本书条目" else "全部条目",
-            onBack,
-        )
+        ScreenHeader("笔记", onBack)
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -131,10 +132,14 @@ fun EntryBrowserScreen(
                 modifier = Modifier.weight(1f),
             )
             Box {
-                FilterChip(
-                    label = sortMode.label,
-                    selected = false,
-                    onClick = { sortExpanded = true },
+                Text(
+                    "⇅",
+                    fontSize = 18.sp,
+                    color = Sumi,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { sortExpanded = true }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                 )
                 DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
                     EntrySortMode.entries.forEach { mode ->
@@ -150,59 +155,84 @@ fun EntryBrowserScreen(
             }
         }
 
-        if (filterBookUid == null && books.isNotEmpty()) {
-            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                FilterChip(
-                    label = filterBook?.let { uid ->
-                        val book = books.find { it.uid == uid }
-                        if (book != null) "${book.title} (${book.entries.size})" else "全部书"
-                    } ?: "全部书",
-                    selected = filterBook != null,
-                    onClick = { bookExpanded = true },
-                )
-                DropdownMenu(expanded = bookExpanded, onDismissRequest = { bookExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text("全部书") },
-                        onClick = {
-                            filterBook = null
-                            bookExpanded = false
-                        },
-                    )
-                    books.forEach { book ->
-                        DropdownMenuItem(
-                            text = { Text("${book.title} (${book.entries.size})") },
-                            onClick = {
-                                filterBook = book.uid
-                                bookExpanded = false
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        Text(
-            "筛选",
-            fontSize = 11.sp,
-            color = SumiSoft,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-        )
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (books.isNotEmpty()) {
+                Box {
+                    val activeBook = filterBook?.let { uid -> books.find { it.uid == uid } }
+                    if (activeBook != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Accent)
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            Text(
+                                activeBook.title,
+                                fontSize = 12.sp,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.clickable { bookExpanded = true },
+                            )
+                            Text(
+                                " ✕",
+                                fontSize = 12.sp,
+                                color = Color.White,
+                                modifier = Modifier.clickable { filterBook = null },
+                            )
+                        }
+                    } else {
+                        FilterChip(
+                            label = "书籍 ▾",
+                            selected = false,
+                            onClick = { bookExpanded = true },
+                        )
+                    }
+                    DropdownMenu(expanded = bookExpanded, onDismissRequest = { bookExpanded = false }) {
+                        books.forEach { book ->
+                            DropdownMenuItem(
+                                text = { Text("${book.title} (${book.entries.size})") },
+                                onClick = {
+                                    filterBook = book.uid
+                                    bookExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(Hairline),
+                )
+            }
             colors.forEach { hc ->
                 val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
-                FilterChip(
-                    label = hc.name,
-                    selected = filterColor == hc.name,
-                    onClick = { filterColor = if (filterColor == hc.name) null else hc.name },
-                    tint = tint,
+                val selected = filterColor == hc.name
+                Box(
+                    modifier = Modifier
+                        .size(if (selected) 24.dp else 20.dp)
+                        .clip(CircleShape)
+                        .background(tint)
+                        .then(if (selected) Modifier.border(2.dp, Sumi, CircleShape) else Modifier)
+                        .clickable { filterColor = if (selected) null else hc.name },
+                )
+            }
+            if (colors.isNotEmpty() && allTags.isNotEmpty()) {
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(Hairline),
                 )
             }
             allTags.take(10).forEach { tag ->
@@ -216,7 +246,7 @@ fun EntryBrowserScreen(
 
         // Count label
         Text(
-            "${filtered.size} 条",
+            "${filtered.size} 条 · ${sortMode.label}",
             fontSize = 11.sp,
             color = SumiSoft,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
@@ -234,7 +264,7 @@ fun EntryBrowserScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 items(filtered, key = { it.entry.id }) { item ->
-                    EntryCard(item, showBook = filterBookUid == null, onClick = { onEntryClick(item) }, colors = composeColors)
+                    EntryCard(item, showBook = filterBook == null, onClick = { onEntryClick(item) }, colors = composeColors)
                 }
             }
         }
