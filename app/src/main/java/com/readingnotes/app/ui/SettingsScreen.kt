@@ -15,20 +15,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.readingnotes.app.settings.AppSettings
 
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
-    onSave: (String, String) -> Unit,
+    onSave: (Int, Int) -> Unit,
     onConnectDropbox: () -> Unit,
     onDisconnectDropbox: () -> Unit,
+    onProviderSettings: () -> Unit,
     onBack: () -> Unit,
 ) {
-    var geminiKey by remember(settings) { mutableStateOf(settings.geminiApiKey.orEmpty()) }
-    var bookTitle by remember(settings) { mutableStateOf(settings.bookTitle) }
+    var maxRetriesText by remember(settings) { mutableStateOf(settings.maxOcrRetries.toString()) }
+    var monthlyBudgetText by remember(settings) { mutableStateOf(settings.monthlyApiBudget.toString()) }
 
     Column(
         modifier = Modifier
@@ -40,27 +40,40 @@ fun SettingsScreen(
 
         OutlinedTextField(
             modifier = Modifier.fillMaxWidth(),
-            value = bookTitle,
-            onValueChange = { bookTitle = it },
-            label = { Text("书名") },
+            value = maxRetriesText,
+            onValueChange = { maxRetriesText = it.filter { c -> c.isDigit() } },
+            label = { Text("OCR 自动重试次数") },
             singleLine = true,
         )
         OutlinedTextField(
             modifier = Modifier.fillMaxWidth(),
-            value = geminiKey,
-            onValueChange = { geminiKey = it },
-            label = { Text("Gemini API Key") },
+            value = monthlyBudgetText,
+            onValueChange = { monthlyBudgetText = it.filter { c -> c.isDigit() } },
+            label = { Text("本月 API 上限（0=无限）") },
             singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
         )
+        Text("本月 API 调用：${settings.apiUsage.monthCalls} 次 · 累计：${settings.apiUsage.totalCalls} 次")
         Button(
-            onClick = { onSave(geminiKey, bookTitle) },
+            onClick = {
+                onSave(
+                    maxRetriesText.toIntOrNull()?.coerceIn(0, 10) ?: settings.maxOcrRetries,
+                    monthlyBudgetText.toIntOrNull()?.coerceAtLeast(0) ?: settings.monthlyApiBudget,
+                )
+            },
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("保存")
         }
 
+        Button(
+            onClick = onProviderSettings,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("模型设置")
+        }
+
         Text("Dropbox 状态：${if (settings.hasDropboxCredential) "已连接" else "未连接"}")
+
         Button(onClick = onConnectDropbox, modifier = Modifier.fillMaxWidth()) {
             Text("连接 Dropbox")
         }

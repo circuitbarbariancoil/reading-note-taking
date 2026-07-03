@@ -12,8 +12,8 @@ android {
         applicationId = "com.readingnotes.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -23,6 +23,16 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            val suffix = project.findProperty("apkSuffix")?.toString() ?: ""
+            val tag = if (suffix.isNotEmpty()) "-$suffix" else ""
+            output.outputFileName = "reading-notes-${variant.versionName}${tag}-${variant.buildType.name}.apk"
         }
     }
 
@@ -65,6 +75,9 @@ dependencies {
 
     // networking for Gemini OCR
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // WorkManager for background retry queue
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     testImplementation("junit:junit:4.13.2")
 }

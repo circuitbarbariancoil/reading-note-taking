@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #F4EFE3; color: #211E1A; }
+      body { font-family: "Noto Sans CJK JP", sans-serif; }
+      .wrap { padding: 16px; }
+      .label { font-size: 12px; color: #6B655C; letter-spacing: 1px; margin: 18px 2px 8px; }
+      .label:first-child { margin-top: 4px; }
+      .box {
+        background: #F4EFE3; border: 1px solid #DAD2C0; border-radius: 12px;
+        padding: 12px 14px; min-height: 44px;
+      }
+      .box:focus-within { border-color: #3C5468; box-shadow: 0 0 0 3px #3C546820; }
+      .cm-editor { background: transparent; }
+      .cm-tooltip.cm-tooltip-autocomplete {
+        background: #FBF7EC; border: 1px solid #DAD2C0; border-radius: 10px;
+        box-shadow: 0 4px 14px rgba(33,30,26,.12); overflow: hidden;
+      }
+      .cm-tooltip.cm-tooltip-autocomplete > ul {
+        font-family: "Noto Sans CJK JP", sans-serif; font-size: 13px;
+        max-height: 180px; padding: 4px 0;
+      }
+      .cm-tooltip.cm-tooltip-autocomplete > ul > li {
+        color: #211E1A; padding: 6px 14px; line-height: 1.4;
+      }
+      .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+        background: #EDE6D6; color: #211E1A;
+      }
+      .cm-completionMatchedText { text-decoration: none; color: #3C5468; font-weight: 600; }
+      .cm-completionIcon { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="label">摘抄</div>
+      <div class="box"><div id="excerpt"></div></div>
+      <div class="label">批注</div>
+      <div class="box"><div id="annotation"></div></div>
+    </div>
+    <script src="editor.bundle.js"></script>
+  </body>
+</html>

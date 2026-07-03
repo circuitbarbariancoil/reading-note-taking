@@ -55,6 +55,9 @@ class GeminiOcrClient(
         http.newCall(request).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
+                if (resp.code == 429) {
+                    throw RateLimitException("Gemini API 限流 (429)，请稍后重试")
+                }
                 throw OcrException("Gemini HTTP ${resp.code}: $text")
             }
             parseText(text)
@@ -76,6 +79,7 @@ class GeminiOcrClient(
     }
 
     class OcrException(message: String) : Exception(message)
+    class RateLimitException(message: String) : Exception(message)
 
     companion object {
         const val DEFAULT_MODEL = "gemini-3-flash-preview"
@@ -92,8 +96,9 @@ class GeminiOcrClient(
             4. 判読できない文字は推測で別の字に置き換えず 〓 で示す。
             5. 補完・要約・翻訳・修正をしない。
             6. ルビは 漢字《ルビ》 の形式で本文中に挿入する。
-            7. ページ番号や柱（作品名）は末尾に [非本文: ...] として記す。
-            8. 出力は本文テキストのみ。
+            7. 改行の扱い: 組版の都合で段落の途中で折り返された行はつなげて一つの段落にし、途中に改行を入れない。段落の区切り（字下げ・行頭の一字下げ・空行など）だけを、空行一つ（改行二つ）で保持する。
+            8. ページ番号は末尾に [非本文: p.数字] の形式のみで出力する（例: [非本文: p.42]）。柱（作品名）は省略する。
+            9. 出力は本文テキストのみ。
         """.trimIndent()
     }
 }

@@ -19,6 +19,7 @@ import com.readingnotes.app.settings.AppSettings
 fun HomeScreen(
     settings: AppSettings,
     onCapture: () -> Unit,
+    onWorkbench: () -> Unit,
     onSettings: () -> Unit,
     onPreview: () -> Unit,
 ) {
@@ -41,6 +42,9 @@ fun HomeScreen(
 
         Button(onClick = onCapture, modifier = Modifier.fillMaxWidth()) {
             Text("拍照采集")
+        }
+        Button(onClick = onWorkbench, modifier = Modifier.fillMaxWidth()) {
+            Text("加工台")
         }
         Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
             Text("设置")
