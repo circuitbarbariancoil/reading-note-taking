@@ -3,11 +3,18 @@ package com.readingnotes.app.ui
 import android.annotation.SuppressLint
 import android.view.ViewGroup
 import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 
 object EntryHtml {
@@ -41,6 +48,7 @@ object EntryHtml {
               .annotation{margin-top:6px;color:#5C564F;font-size:12px;line-height:1.6;}
               .divider{height:1px;background:rgba(33,30,26,.12);margin:8px 0;}
               rt{font-size:.5em;}
+              .tag{color:#3C5468;background:#E1E6EA;border-radius:8px;padding:0 5px;font-size:.85em;white-space:nowrap;}
               $swatches
             </style></head><body>
               <div class="block">
@@ -100,10 +108,19 @@ object EntryHtml {
                 val (endExclusive, base, reading) = ruby
                 sb.append("<ruby>").append(esc(base)).append("<rt>").append(esc(reading)).append("</rt></ruby>")
                 i = endExclusive
-            } else {
-                sb.append(esc(String(Character.toChars(cps[i]))))
-                i++
+                continue
             }
+            if (cps[i] == '#'.code) {
+                var j = i + 1
+                while (j < cps.size && !Character.isWhitespace(cps[j]) && cps[j] != '#'.code) j++
+                if (j > i + 1) {
+                    sb.append("<span class=\"tag\">").append(esc(String(cps, i, j - i))).append("</span>")
+                    i = j
+                    continue
+                }
+            }
+            sb.append(esc(String(Character.toChars(cps[i]))))
+            i++
         }
         return sb.toString()
     }
@@ -148,6 +165,8 @@ fun EntryHtmlWebView(
     colors: Map<String, Color>,
     modifier: Modifier = Modifier,
 ) {
+    var contentHeightDp by remember(excerpt, annotation) { mutableStateOf(0) }
+    val setHeight = rememberUpdatedState<(Int) -> Unit> { h -> if (h > 0) contentHeightDp = h }
     val html = remember(excerpt, annotation, colors) {
         EntryHtml.render(
             excerpt = excerpt,
@@ -159,9 +178,14 @@ fun EntryHtmlWebView(
     }
 
     AndroidView(
-        modifier = modifier,
+        modifier = modifier.height(if (contentHeightDp > 0) contentHeightDp.dp else 56.dp),
         factory = { ctx ->
             WebView(ctx).apply {
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        view.postDelayed({ setHeight.value(view.contentHeight) }, 60)
+                    }
+                }
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,

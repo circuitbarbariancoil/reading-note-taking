@@ -46,10 +46,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Entries
 import com.readingnotes.app.model.Entry
-import com.readingnotes.app.model.MarkupText
+import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.repository.BookRepository
 import com.readingnotes.app.settings.AppSettings
 import com.readingnotes.app.ui.theme.Accent
@@ -257,7 +258,22 @@ fun WorkbenchScreen(
                 entries = pageEntries,
                 colorMap = composeColors,
                 onEdit = { editingEntryId = it.id },
-                onDelete = { target -> save(book.copy(entries = book.entries.filterNot { it.id == target.id })) },
+                onDelete = { target ->
+                    val newPages = if (target.kind == EntryKind.highlight) {
+                        book.pages.map { p ->
+                            if (p.page != target.page) p
+                            else p.copy(
+                                highlights = p.highlights.filterNot { hl ->
+                                    hl.id == target.highlightId ||
+                                        (target.highlightId == null && hl.start >= target.srcStart && hl.end <= target.srcEnd)
+                                },
+                            )
+                        }
+                    } else {
+                        book.pages
+                    }
+                    save(book.copy(pages = newPages, entries = book.entries.filterNot { it.id == target.id }))
+                },
             )
         }
     }
@@ -441,20 +457,22 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            MarkupText.rich(entry.text, colorMap),
-            fontFamily = FontFamily.Serif, fontSize = 15.sp, color = Sumi,
-        )
-        if (entry.annotation.isNotBlank()) {
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Hairline))
-            Text(
-                MarkupText.rich(
-                    entry.annotation,
-                    colorMap,
-                    tagStyle = androidx.compose.ui.text.SpanStyle(color = Accent, background = AccentSoft),
-                ),
-                fontSize = 13.sp,
-                color = SumiSoft,
+        Box {
+            EntryHtmlWebView(
+                excerpt = entry.text,
+                annotation = entry.annotation,
+                colors = colorMap,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // WebView swallows touches; this transparent layer keeps the whole card tappable.
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onClick,
+                    ),
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {

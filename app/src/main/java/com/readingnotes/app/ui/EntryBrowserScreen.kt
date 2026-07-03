@@ -481,7 +481,7 @@ private fun EntryCard(
                 excerpt = item.entry.text,
                 annotation = item.entry.annotation,
                 colors = colors,
-                modifier = Modifier.fillMaxWidth().height(110.dp),
+                modifier = Modifier.fillMaxWidth(),
             )
             // WebView swallows touches; this transparent layer keeps the whole card tappable.
             Box(

@@ -278,6 +278,12 @@ window.RN = {
     if (window.Android && window.Android.onCollect) window.Android.onCollect(payload);
     return payload;
   },
+  // Current content without triggering the Android save bridge (dirty checks).
+  snapshot() {
+    const excerpt = excerptView ? excerptView.state.doc.toString() : "";
+    const annotation = annotationView ? annotationView.state.doc.toString() : "";
+    return JSON.stringify({ excerpt, annotation });
+  },
   focusAnnotation() {
     if (annotationView) annotationView.focus();
   },

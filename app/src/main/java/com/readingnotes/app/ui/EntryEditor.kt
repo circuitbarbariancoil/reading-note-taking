@@ -65,7 +65,29 @@ fun EntryEditor(
 ) {
     val currentEntry = rememberUpdatedState(entry)
     val currentOnSave = rememberUpdatedState(onSave)
+    val currentOnDismiss = rememberUpdatedState(onDismiss)
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+
+    // Back: compare live editor content with the stored entry; only prompt when dirty.
+    fun requestBack() {
+        val web = webView
+        if (web == null) {
+            currentOnDismiss.value()
+            return
+        }
+        web.evaluateJavascript("window.RN ? RN.snapshot() : null") { result ->
+            val dirty = runCatching {
+                if (result == null || result == "null") return@runCatching false
+                val inner = JSONObject(org.json.JSONTokener(result).nextValue() as String)
+                inner.optString("excerpt") != currentEntry.value.text ||
+                    inner.optString("annotation") != currentEntry.value.annotation
+            }.getOrDefault(false)
+            if (dirty) confirmDiscard = true else currentOnDismiss.value()
+        }
+    }
+
+    androidx.activity.compose.BackHandler(onBack = ::requestBack)
 
     val configJson = remember(entry, palette, knownTags) {
         JSONObject().apply {
@@ -91,7 +113,7 @@ fun EntryEditor(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("‹", fontSize = 26.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDismiss).padding(end = 8.dp))
+            Text("‹", fontSize = 26.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = ::requestBack).padding(end = 8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("条目", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi)
                 Text("p.${entry.page}", fontSize = 12.sp, color = SumiSoft)
@@ -177,6 +199,41 @@ fun EntryEditor(
             ToolbarChip("#") { js("window.RN && RN.insertTag();") }
         }
     }
+
+    if (confirmDiscard) {
+        DiscardDialog(
+            onSave = {
+                confirmDiscard = false
+                webView?.evaluateJavascript("window.RN && RN.collect();", null)
+            },
+            onDiscard = {
+                confirmDiscard = false
+                currentOnDismiss.value()
+            },
+            onDismiss = { confirmDiscard = false },
+        )
+    }
+}
+
+@Composable
+private fun DiscardDialog(
+    onSave: () -> Unit,
+    onDiscard: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Paper,
+        shape = RoundedCornerShape(16.dp),
+        title = { Text("未保存的修改", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Sumi) },
+        text = { Text("保留这次编辑吗？", fontSize = 13.sp, color = SumiSoft) },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onSave) { Text("保存", color = Accent) }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDiscard) { Text("放弃", color = SumiSoft) }
+        },
+    )
 }
 
 @Composable

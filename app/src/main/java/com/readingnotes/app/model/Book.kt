@@ -78,6 +78,8 @@ data class Entry(
     val srcEnd: Int,
     val text: String,
     val kind: EntryKind = EntryKind.highlight,
+    /** Id of the [PageHighlight] this entry was created from, for paired deletion. */
+    val highlightId: String? = null,
     val annotation: String = "",
     val tags: List<String> = emptyList(),
     val createdAt: String,

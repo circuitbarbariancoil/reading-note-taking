@@ -68,6 +68,7 @@ object Entries {
             srcEnd = sEnd,
             text = marked,
             kind = EntryKind.highlight,
+            highlightId = highlight.id,
             createdAt = now,
             updatedAt = now,
         )
