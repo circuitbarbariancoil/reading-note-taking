@@ -227,7 +227,8 @@ fun PageListScreen(
             }
         }
 
-        if (processItems.isNotEmpty()) {
+        val hasActiveItems = processItems.any { it.step == ProcessStep.Queued || it.step == ProcessStep.Saving || it.step == ProcessStep.Ocr }
+        if (processItems.isNotEmpty() && hasActiveItems) {
             Column(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
