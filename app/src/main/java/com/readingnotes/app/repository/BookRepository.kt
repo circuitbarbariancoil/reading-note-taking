@@ -11,12 +11,17 @@ import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.GeminiOcrClient
 import com.readingnotes.app.ocr.OcrDispatcher
 import com.readingnotes.app.ocr.ProviderConfig
+import com.readingnotes.app.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 class DuplicatePageNumberException(pageNumber: Int) : IllegalStateException("第 $pageNumber 页已存在，请换一个页码")
 
@@ -486,6 +491,129 @@ class BookRepository(
             }
         }
         zipFile
+    }
+
+    /**
+     * Export a full app backup as a ZIP containing settings.json + all books
+     * (book.json + archive images + unprocessed captures per book).
+     */
+    suspend fun exportFullBackup(settingsStore: SettingsStore): File = withContext(Dispatchers.IO) {
+        val timestamp = java.time.LocalDateTime.now().format(
+            java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+        )
+        val zipFile = File(context.cacheDir, "reading_notes_backup_$timestamp.zip")
+        ZipOutputStream(zipFile.outputStream().buffered()).use { zip ->
+            // settings.json
+            zip.putNextEntry(ZipEntry("settings.json"))
+            zip.write(settingsStore.exportSettingsJson().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+
+            // All books
+            val books = listBooks()
+            for (book in books) {
+                val prefix = "books/${book.uid}/"
+                // book.json
+                zip.putNextEntry(ZipEntry("${prefix}book.json"))
+                zip.write(BookStore.encode(book).toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+                // archive images
+                for (page in book.pages) {
+                    val rel = page.archiveImage ?: continue
+                    val file = archiveFile(book.uid, rel)
+                    if (file.exists()) {
+                        zip.putNextEntry(ZipEntry("$prefix$rel"))
+                        zip.write(file.readBytes())
+                        zip.closeEntry()
+                    }
+                }
+                // unprocessed capture images
+                for (capture in book.captures) {
+                    val file = File(capture.imagePath)
+                    if (file.exists()) {
+                        zip.putNextEntry(ZipEntry("${prefix}captures/${file.name}"))
+                        zip.write(file.readBytes())
+                        zip.closeEntry()
+                    }
+                }
+            }
+        }
+        zipFile
+    }
+
+    /**
+     * Import a full app backup from a ZIP input stream.
+     * Restores settings + all books (newer-wins by updatedAt for conflicts).
+     * Returns the number of books restored/updated.
+     */
+    suspend fun importFullBackup(
+        inputStream: InputStream,
+        settingsStore: SettingsStore,
+        onProgress: (String) -> Unit = {},
+    ): Int = withContext(Dispatchers.IO) {
+        val tempDir = File(context.cacheDir, "backup_import_${System.currentTimeMillis()}")
+        tempDir.mkdirs()
+        try {
+            // Extract ZIP to temp dir
+            ZipInputStream(inputStream.buffered()).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val outFile = File(tempDir, entry.name)
+                        outFile.parentFile?.mkdirs()
+                        outFile.outputStream().use { os -> zis.copyTo(os) }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+
+            // Restore settings
+            val settingsFile = File(tempDir, "settings.json")
+            if (settingsFile.exists()) {
+                onProgress("正在恢复设置…")
+                runCatching {
+                    settingsStore.importSettingsJson(settingsFile.readText(Charsets.UTF_8))
+                }.onFailure { onProgress("设置恢复失败: ${it.message?.take(40)}") }
+            }
+
+            // Restore books
+            val booksDir = File(tempDir, "books")
+            val bookDirs = booksDir.listFiles()?.filter { it.isDirectory }.orEmpty()
+            var restoredCount = 0
+            for (dir in bookDirs) {
+                val uid = dir.name
+                val jsonFile = File(dir, "book.json")
+                if (!jsonFile.exists()) continue
+                onProgress("正在恢复: $uid")
+                try {
+                    val importedBook = BookStore.decode(jsonFile.readText(Charsets.UTF_8))
+                    val localBook = loadBook(uid)
+                    // Skip if local is newer
+                    if (localBook != null && localBook.updatedAt >= importedBook.updatedAt) {
+                        onProgress("跳过 (本地更新): ${importedBook.title}")
+                        continue
+                    }
+                    // Copy book.json
+                    val destDir = bookDir(uid)
+                    destDir.mkdirs()
+                    jsonFile.copyTo(bookJsonFile(uid), overwrite = true)
+                    // Copy archive images and captures
+                    dir.walkTopDown().filter { it.isFile && it.name != "book.json" }.forEach { srcFile ->
+                        val relPath = srcFile.relativeTo(dir).path
+                        val destFile = File(destDir, relPath)
+                        destFile.parentFile?.mkdirs()
+                        srcFile.copyTo(destFile, overwrite = true)
+                    }
+                    restoredCount++
+                    onProgress("已恢复: ${importedBook.title}")
+                } catch (e: Exception) {
+                    onProgress("恢复失败 ($uid): ${e.message?.take(60)}")
+                }
+            }
+            restoredCount
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 
     private fun buildPageFromCapture(

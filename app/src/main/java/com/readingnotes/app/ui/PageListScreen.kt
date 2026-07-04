@@ -1,9 +1,12 @@
 package com.readingnotes.app.ui
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,13 +25,16 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,9 +60,15 @@ import com.readingnotes.app.ui.theme.SumiSoft
 
 enum class PageSortMode { ByOrder, ByPageNumber }
 
-/** UI state of a background OCR job. */
 enum class OcrJobState { Running, Failed }
 
+/** Sealed type to identify items in the page list for selection. */
+sealed class PageListItemId {
+    data class ProcessedPage(val page: Int, val addedAt: String) : PageListItemId()
+    data class UnprocessedCapture(val captureId: String) : PageListItemId()
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PageListScreen(
     book: Book,
@@ -76,11 +88,19 @@ fun PageListScreen(
     onAssignPage: (Capture, Int) -> Unit,
     onFillPageNumber: (Capture) -> Unit,
     onDeleteCapture: (Capture) -> Unit,
+    onDeletePages: (List<Page>) -> Unit = {},
+    onDeleteCaptures: (List<Capture>) -> Unit = {},
     onEntries: () -> Unit = {},
-    onExportZip: () -> Unit = {},
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
     var assignPageDialog by remember { mutableStateOf<Capture?>(null) }
+    val selectedItems = remember { mutableStateListOf<PageListItemId>() }
+    val selectMode = selectedItems.isNotEmpty()
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    fun toggleSelect(id: PageListItemId) {
+        if (id in selectedItems) selectedItems.remove(id) else selectedItems.add(id)
+    }
 
     val sortedPages = remember(book.pages, sortMode) {
         when (sortMode) {
@@ -96,63 +116,84 @@ fun PageListScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "‹",
-                    fontSize = 26.sp,
-                    color = SumiSoft,
-                    modifier = Modifier.clickable(onClick = onBack).padding(end = 8.dp),
-                )
-                Column(modifier = Modifier.weight(1f)) {
+                if (selectMode) {
                     Text(
-                        book.title,
+                        "‹",
+                        fontSize = 26.sp,
+                        color = SumiSoft,
+                        modifier = Modifier.clickable { selectedItems.clear() }.padding(end = 8.dp),
+                    )
+                    Text(
+                        "已选 ${selectedItems.size} 项",
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Medium,
                         fontSize = 18.sp,
                         color = Sumi,
                     )
+                    Spacer(Modifier.weight(1f))
                     Text(
-                        "${book.pages.size}页 · ${book.captures.size}张未处理",
-                        fontSize = 12.sp,
+                        "取消",
+                        fontSize = 13.sp,
                         color = SumiSoft,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { selectedItems.clear() }
+                            .padding(8.dp),
+                    )
+                    Text(
+                        "删除",
+                        fontSize = 13.sp,
+                        color = Color(0xFFB3524A),
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { confirmDelete = true }
+                            .padding(8.dp),
+                    )
+                } else {
+                    Text(
+                        "‹",
+                        fontSize = 26.sp,
+                        color = SumiSoft,
+                        modifier = Modifier.clickable(onClick = onBack).padding(end = 8.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            book.title,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 18.sp,
+                            color = Sumi,
+                        )
+                        Text(
+                            "${book.pages.size}页 · ${book.captures.size}张未处理",
+                            fontSize = 12.sp,
+                            color = SumiSoft,
+                        )
+                    }
+                    Text(
+                        "条目",
+                        fontSize = 12.sp,
+                        color = Accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFEDE6D6))
+                            .clickable(onClick = onEntries)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                    Spacer(Modifier.padding(horizontal = 4.dp))
+                    Text(
+                        if (sortMode == PageSortMode.ByPageNumber) "按页序" else "按时间",
+                        fontSize = 12.sp,
+                        color = Accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFEDE6D6))
+                            .clickable {
+                                sortMode = if (sortMode == PageSortMode.ByPageNumber) PageSortMode.ByOrder else PageSortMode.ByPageNumber
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
                     )
                 }
-                // Entries button
-                Text(
-                    "条目",
-                    fontSize = 12.sp,
-                    color = Accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFFEDE6D6))
-                        .clickable(onClick = onEntries)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-                Spacer(Modifier.padding(horizontal = 4.dp))
-                // Export ZIP button
-                Text(
-                    "导出",
-                    fontSize = 12.sp,
-                    color = Accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFFEDE6D6))
-                        .clickable(onClick = onExportZip)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-                Spacer(Modifier.padding(horizontal = 4.dp))
-                // Sort toggle
-                Text(
-                    if (sortMode == PageSortMode.ByPageNumber) "按页序" else "按时间",
-                    fontSize = 12.sp,
-                    color = Accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFFEDE6D6))
-                        .clickable {
-                            sortMode = if (sortMode == PageSortMode.ByPageNumber) PageSortMode.ByOrder else PageSortMode.ByPageNumber
-                        }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
             }
 
             LazyVerticalGrid(
@@ -168,7 +209,16 @@ fun PageListScreen(
                         Text("已处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
                     }
                     itemsIndexed(sortedPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
-                        PageThumbnail(page, book, repository, onClick = { onOpenPage(page) })
+                        val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
+                        val selected = itemId in selectedItems
+                        PageThumbnail(
+                            page, book, repository,
+                            selected = selected,
+                            onClick = {
+                                if (selectMode) toggleSelect(itemId) else onOpenPage(page)
+                            },
+                            onLongClick = { toggleSelect(itemId) },
+                        )
                     }
                 }
 
@@ -208,40 +258,50 @@ fun PageListScreen(
                         }
                     }
                     items(book.captures, key = { "cap-${it.id}" }) { capture ->
+                        val itemId = PageListItemId.UnprocessedCapture(capture.id)
+                        val selected = itemId in selectedItems
                         CaptureThumbnail(
                             capture = capture,
                             state = ocrStatus[capture.id],
+                            selected = selected,
                             onClick = {
-                                if (ocrStatus[capture.id] == OcrJobState.Running) return@CaptureThumbnail
-                                if (capture.ocrText != null) onFillPageNumber(capture) else assignPageDialog = capture
+                                if (selectMode) {
+                                    toggleSelect(itemId)
+                                } else {
+                                    if (ocrStatus[capture.id] == OcrJobState.Running) return@CaptureThumbnail
+                                    if (capture.ocrText != null) onFillPageNumber(capture) else assignPageDialog = capture
+                                }
                             },
+                            onLongClick = { toggleSelect(itemId) },
                         )
                     }
                 }
             }
 
-            // Bottom action row
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "＋ 拍照",
-                    fontSize = 14.sp,
-                    color = Color.White,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Accent)
-                        .clickable(onClick = onCapture)
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                )
+            // Bottom action row (hide in select mode)
+            if (!selectMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "＋ 拍照",
+                        fontSize = 14.sp,
+                        color = Color.White,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Accent)
+                            .clickable(onClick = onCapture)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
             }
         }
 
         val hasActiveItems = processItems.any { it.step == ProcessStep.Queued || it.step == ProcessStep.Saving || it.step == ProcessStep.Ocr }
-        if (processItems.isNotEmpty() && hasActiveItems) {
+        if (processItems.isNotEmpty() && hasActiveItems && !selectMode) {
             Column(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -282,18 +342,59 @@ fun PageListScreen(
             },
         )
     }
+
+    if (confirmDelete) {
+        val pageCount = selectedItems.count { it is PageListItemId.ProcessedPage }
+        val captureCount = selectedItems.count { it is PageListItemId.UnprocessedCapture }
+        val desc = buildString {
+            if (pageCount > 0) append("${pageCount} 个已处理页")
+            if (pageCount > 0 && captureCount > 0) append("和 ")
+            if (captureCount > 0) append("${captureCount} 张未处理照片")
+        }
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除 ${selectedItems.size} 项？") },
+            text = { Text("将永久删除 $desc。相关条目、高亮和 Dropbox 备份也会被清除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    val pagesToDelete = selectedItems.filterIsInstance<PageListItemId.ProcessedPage>()
+                        .mapNotNull { sel -> book.pages.find { it.page == sel.page && it.addedAt == sel.addedAt } }
+                    val capturesToDelete = selectedItems.filterIsInstance<PageListItemId.UnprocessedCapture>()
+                        .mapNotNull { sel -> book.captures.find { it.id == sel.captureId } }
+                    selectedItems.clear()
+                    if (pagesToDelete.isNotEmpty()) onDeletePages(pagesToDelete)
+                    if (capturesToDelete.isNotEmpty()) onDeleteCaptures(capturesToDelete)
+                }) {
+                    Text("删除", color = Color(0xFFB3524A))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PageThumbnail(page: Page, book: Book, repository: BookRepository, onClick: () -> Unit) {
+private fun PageThumbnail(
+    page: Page,
+    book: Book,
+    repository: BookRepository,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     val imagePath = remember(page) { repository.archiveImagePath(book, page) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White)
-            .clickable(onClick = onClick)
+            .then(if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp)) else Modifier)
+            .background(if (selected) Color(0xFFEDE6D6) else Color.White)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -313,8 +414,19 @@ private fun PageThumbnail(page: Page, book: Book, repository: BookRepository, on
                     Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
             }
-            // OCR status badge
-            if (page.ocrText != null) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(Accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✓", color = Color.White, fontSize = 10.sp)
+                }
+            } else if (page.ocrText != null) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -338,14 +450,22 @@ private fun PageThumbnail(page: Page, book: Book, repository: BookRepository, on
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CaptureThumbnail(capture: Capture, state: OcrJobState?, onClick: () -> Unit) {
+private fun CaptureThumbnail(
+    capture: Capture,
+    state: OcrJobState?,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFFE8E2D8))
-            .clickable(onClick = onClick)
+            .then(if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp)) else Modifier)
+            .background(if (selected) Color(0xFFEDE6D6) else Color(0xFFE8E2D8))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -364,8 +484,19 @@ private fun CaptureThumbnail(capture: Capture, state: OcrJobState?, onClick: () 
                 Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } ?: Text("?", fontSize = 18.sp, color = SumiSoft)
 
-            when (state) {
-                OcrJobState.Running -> Box(
+            when {
+                selected -> Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(Accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✓", color = Color.White, fontSize = 10.sp)
+                }
+                state == OcrJobState.Running -> Box(
                     modifier = Modifier.fillMaxSize().background(Color(0x66000000)),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -375,7 +506,7 @@ private fun CaptureThumbnail(capture: Capture, state: OcrJobState?, onClick: () 
                         color = Color.White,
                     )
                 }
-                OcrJobState.Failed -> Box(
+                state == OcrJobState.Failed -> Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(3.dp)
@@ -386,7 +517,6 @@ private fun CaptureThumbnail(capture: Capture, state: OcrJobState?, onClick: () 
                 ) {
                     Text("!", fontSize = 10.sp, color = Color.White)
                 }
-                null -> Unit
             }
         }
         Text(

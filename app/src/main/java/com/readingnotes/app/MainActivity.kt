@@ -105,6 +105,29 @@ class MainActivity : ComponentActivity() {
     private var syncPendingCount by mutableStateOf(0)
     private var lastSyncTime by mutableStateOf<String?>(null)
     private var restoreStatus by mutableStateOf<String?>(null)
+    private var backupStatus by mutableStateOf<String?>(null)
+
+    private val importBackupLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        lifecycleScope.launch {
+            backupStatus = "正在恢复…"
+            try {
+                val inputStream = contentResolver.openInputStream(uri) ?: run {
+                    backupStatus = "无法读取文件"
+                    return@launch
+                }
+                val count = bookRepository.importFullBackup(inputStream, settingsStore) { msg ->
+                    backupStatus = msg
+                }
+                appSettings = settingsStore.read()
+                backupStatus = if (count > 0) "已恢复 $count 本书 + 设置" else "没有需要恢复的内容"
+            } catch (e: Exception) {
+                backupStatus = "恢复失败: ${e.message?.take(60)}"
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -148,6 +171,7 @@ class MainActivity : ComponentActivity() {
                     activeBook = book
                     currentScreen = ShellScreen.PageList
                 },
+                onDeleteBooks = { uids -> deleteBooks(uids) },
                 onEntries = {
                     entryBrowserBookUid = null
                     currentScreen = ShellScreen.EntryBrowser
@@ -183,7 +207,8 @@ class MainActivity : ComponentActivity() {
                             capture.ocrText?.let { pendingPageNumber = PendingPageNumber(capture, it) }
                         },
                         onDeleteCapture = { capture -> deleteCapture(capture) },
-                        onExportZip = { exportBookZip() },
+                        onDeletePages = { pages -> deletePages(pages) },
+                        onDeleteCaptures = { captures -> deleteCaptures(captures) },
                         onEntries = {
                             entryBrowserBookUid = book.uid
                             currentScreen = ShellScreen.EntryBrowser
@@ -223,10 +248,13 @@ class MainActivity : ComponentActivity() {
                 },
                 onProviderSettings = { currentScreen = ShellScreen.ProviderSettings },
                 onRestoreFromDropbox = { restoreFromDropbox() },
+                onExportBackup = { exportFullBackup() },
+                onImportBackup = { importFullBackup() },
                 onBack = { currentScreen = ShellScreen.BookShelf },
                 syncPendingCount = syncPendingCount,
                 lastSyncTime = lastSyncTime,
                 restoreStatus = restoreStatus,
+                backupStatus = backupStatus,
             )
 
             ShellScreen.ProviderSettings -> ProviderSettingsScreen(
@@ -677,6 +705,16 @@ class MainActivity : ComponentActivity() {
         removeProcessItem(processQueue, item.id)
     }
 
+    private fun deleteBooks(uids: List<String>) {
+        for (uid in uids) {
+            bookRepository.deleteBook(uid)
+        }
+        if (activeBook?.uid in uids) {
+            activeBook = null
+            currentScreen = ShellScreen.BookShelf
+        }
+    }
+
     private fun deletePage(page: Page) {
         val book = activeBook ?: return
         lifecycleScope.launch {
@@ -692,6 +730,30 @@ class MainActivity : ComponentActivity() {
         val book = activeBook ?: return
         lifecycleScope.launch {
             activeBook = bookRepository.deleteCapture(book, capture)
+        }
+    }
+
+    private fun deletePages(pages: List<Page>) {
+        val book = activeBook ?: return
+        lifecycleScope.launch {
+            var current = book
+            for (page in pages) {
+                current = bookRepository.deletePage(current, page)
+            }
+            activeBook = current
+            activePageIndex = 0
+            syncToDropbox(current)
+        }
+    }
+
+    private fun deleteCaptures(captures: List<Capture>) {
+        val book = activeBook ?: return
+        lifecycleScope.launch {
+            var current = book
+            for (capture in captures) {
+                current = bookRepository.deleteCapture(current, capture)
+            }
+            activeBook = current
         }
     }
 
@@ -745,22 +807,31 @@ class MainActivity : ComponentActivity() {
         syncPendingCount = store.peekAll().size
     }
 
-    private fun exportBookZip() {
-        val book = activeBook ?: return
+    private fun exportFullBackup() {
         lifecycleScope.launch {
-            val zipFile = bookRepository.exportBookZip(book)
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                this@MainActivity,
-                "$packageName.fileprovider",
-                zipFile,
-            )
-            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = "application/zip"
-                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            backupStatus = "正在生成备份…"
+            try {
+                val zipFile = bookRepository.exportFullBackup(settingsStore)
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    this@MainActivity,
+                    "$packageName.fileprovider",
+                    zipFile,
+                )
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "application/zip"
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                backupStatus = "备份已生成"
+                startActivity(android.content.Intent.createChooser(intent, "备份全部数据"))
+            } catch (e: Exception) {
+                backupStatus = "备份失败: ${e.message?.take(60)}"
             }
-            startActivity(android.content.Intent.createChooser(intent, "导出书籍"))
         }
+    }
+
+    private fun importFullBackup() {
+        importBackupLauncher.launch("application/zip")
     }
 
     private fun restoreFromDropbox() {
