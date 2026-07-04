@@ -84,7 +84,6 @@ fun WorkbenchScreen(
     onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
     processItems: List<ProcessItem> = emptyList(),
     onRetryProcessItem: (ProcessItem) -> Unit = {},
-    onFillProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
     queueCollapsed: Boolean = false,
     onExpandQueue: () -> Unit = {},
@@ -242,7 +241,6 @@ fun WorkbenchScreen(
                     ProcessingQueueCard(
                         items = processItems,
                         onRetry = onRetryProcessItem,
-                        onFillPage = onFillProcessItem,
                         onDismiss = onDismissProcessItem,
                         onClose = onCollapseQueue,
                     )

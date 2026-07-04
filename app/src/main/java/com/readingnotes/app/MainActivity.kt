@@ -169,7 +169,6 @@ class MainActivity : ComponentActivity() {
                         onBack = { currentScreen = ShellScreen.BookShelf },
                         onOcrCapture = { capture -> ocrCapture(capture, jumpToPage = false) },
                         onRetryProcessItem = { item -> retryProcessItem(item) },
-                        onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
                         queueCollapsed = queueCollapsed,
                         onExpandQueue = { queueCollapsed = false },
@@ -254,7 +253,6 @@ class MainActivity : ComponentActivity() {
                         onChangePageNumber = { page, newNumber -> changePageNumber(page, newNumber) },
                         processItems = processQueue,
                         onRetryProcessItem = { item -> retryProcessItem(item) },
-                        onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
                         queueCollapsed = queueCollapsed,
                         onExpandQueue = { queueCollapsed = false },
@@ -404,6 +402,7 @@ class MainActivity : ComponentActivity() {
     private fun saveShot(bytes: ByteArray) {
         val book = activeBook ?: return
         val tempId = "shot-${captureShotCount + 1}-${System.currentTimeMillis()}"
+        startNewBatchIfIdle()
         upsertProcessItem(processQueue, tempId, ProcessStep.Saving)
         captureSaving = true
         lifecycleScope.launch {
@@ -439,7 +438,16 @@ class MainActivity : ComponentActivity() {
             showMonthlyApiBudgetError()
             return
         }
+        startNewBatchIfIdle()
         lifecycleScope.launch { runOcrCapture(capture, jumpToPage) }
+    }
+
+    /** A new OCR batch replaces the finished previous one on the status board. */
+    private fun startNewBatchIfIdle() {
+        val active = processQueue.any {
+            it.step == ProcessStep.Queued || it.step == ProcessStep.Saving || it.step == ProcessStep.Ocr
+        }
+        if (!active) processQueue.clear()
     }
 
     private suspend fun runOcrCapture(capture: Capture, jumpToPage: Boolean) {
@@ -463,7 +471,7 @@ class MainActivity : ComponentActivity() {
             )) {
                 is ProcessOutcome.Done -> {
                     ocrStatus.remove(capture.id)
-                    removeProcessItem(processQueue, capture.id)
+                    upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
                     activeBook = outcome.book
                     if (jumpToPage) {
                         activePageIndex = outcome.book.pages
@@ -475,7 +483,8 @@ class MainActivity : ComponentActivity() {
 
                 is ProcessOutcome.NeedsPageNumber -> {
                     ocrStatus.remove(capture.id)
-                    upsertProcessItem(processQueue, capture.id, ProcessStep.NeedsPage, message = outcome.ocrText)
+                    // OCR itself succeeded; the page number is filled later from the page list.
+                    upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
                     // Keep the recognized text so 稍后处理 doesn't lose or re-bill it.
                     activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
                 }
@@ -505,12 +514,10 @@ class MainActivity : ComponentActivity() {
                 )
                 if (outcome is ProcessOutcome.Done) {
                     activeBook = outcome.book
-                    removeProcessItem(processQueue, pending.capture.id)
                     syncToDropbox(outcome.book)
                 }
             } catch (e: DuplicatePageNumberException) {
                 ocrErrorMessage = e.message
-                upsertProcessItem(processQueue, pending.capture.id, ProcessStep.NeedsPage, message = pending.ocrText)
             } catch (t: Throwable) {
                 ocrStatus[pending.capture.id] = OcrJobState.Failed
                 upsertProcessItem(processQueue, pending.capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
@@ -524,6 +531,7 @@ class MainActivity : ComponentActivity() {
             showMonthlyApiBudgetError()
             return
         }
+        startNewBatchIfIdle()
         lifecycleScope.launch {
             val pendingCaptures = activeBook?.captures?.filter { it.ocrText == null }.orEmpty()
             pendingCaptures.forEach { capture ->
@@ -559,7 +567,6 @@ class MainActivity : ComponentActivity() {
                     bookRepository.assignPageNumber(book, capture, pageNumber)
                 }
                 activeBook = updated
-                removeProcessItem(processQueue, capture.id)
                 syncToDropbox(updated)
             } catch (e: DuplicatePageNumberException) {
                 ocrErrorMessage = e.message
@@ -604,13 +611,11 @@ class MainActivity : ComponentActivity() {
         list: MutableList<ProcessItem>,
         id: String,
         step: ProcessStep,
-        pageNumber: Int? = null,
         message: String? = null,
     ) {
         val item = ProcessItem(
             id = id,
             step = step,
-            pageNumber = pageNumber,
             message = message,
         )
         val index = list.indexOfFirst { it.id == id }
@@ -622,7 +627,6 @@ class MainActivity : ComponentActivity() {
         oldId: String,
         newId: String,
         step: ProcessStep,
-        pageNumber: Int? = null,
         message: String? = null,
     ) {
         val oldIndex = list.indexOfFirst { it.id == oldId }
@@ -631,12 +635,11 @@ class MainActivity : ComponentActivity() {
             val item = ProcessItem(
                 id = newId,
                 step = step,
-                pageNumber = pageNumber,
                 message = message,
             )
             if (oldIndex <= list.size) list.add(oldIndex, item) else list.add(item)
         } else {
-            upsertProcessItem(list, newId, step, pageNumber, message)
+            upsertProcessItem(list, newId, step, message)
         }
     }
 
@@ -648,7 +651,7 @@ class MainActivity : ComponentActivity() {
         val book = activeBook ?: return
         when {
             item.id.startsWith("page-") -> {
-                val pageNumber = item.pageNumber ?: item.id.removePrefix("page-").toIntOrNull() ?: return
+                val pageNumber = item.id.removePrefix("page-").toIntOrNull() ?: return
                 val page = book.pages.firstOrNull { it.page == pageNumber } ?: return
                 ocrPage(page)
             }
@@ -657,12 +660,6 @@ class MainActivity : ComponentActivity() {
                 ocrCapture(capture, jumpToPage = currentScreen == ShellScreen.Workbench)
             }
         }
-    }
-
-    private fun fillProcessItem(item: ProcessItem) {
-        val book = activeBook ?: return
-        val capture = book.captures.firstOrNull { it.id == item.id } ?: return
-        pendingPageNumber = PendingPageNumber(capture, capture.ocrText ?: item.message.orEmpty())
     }
 
     private fun dismissProcessItem(item: ProcessItem) {
@@ -686,12 +683,13 @@ class MainActivity : ComponentActivity() {
         }
         if (!appSettings.hasAnyProvider) {
             ocrStatus[statusKey] = OcrJobState.Failed
-            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, pageNumber = page.page, message = "未配置 OCR 服务（去设置添加）")
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, message = "未配置 OCR 服务（去设置添加）")
             return
         }
+        startNewBatchIfIdle()
         lifecycleScope.launch {
             ocrStatus[statusKey] = OcrJobState.Running
-            upsertProcessItem(processQueue, statusKey, ProcessStep.Ocr, pageNumber = page.page)
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Ocr)
             try {
                 val updated = bookRepository.ocrExistingPage(
                     book,
@@ -702,12 +700,12 @@ class MainActivity : ComponentActivity() {
                 )
                 ocrStatus.remove(statusKey)
                 activeBook = updated
-                removeProcessItem(processQueue, statusKey)
+                upsertProcessItem(processQueue, statusKey, ProcessStep.Done)
                 syncToDropbox(updated)
             } catch (t: Throwable) {
                 ocrStatus[statusKey] = OcrJobState.Failed
                 ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
-                upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, pageNumber = page.page, message = t.message?.take(80) ?: "未知错误")
+                upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
                 // Enqueue for background retry
                 OcrRetryWorker.enqueuePageOcr(this@MainActivity, book.uid, page.page)
             }

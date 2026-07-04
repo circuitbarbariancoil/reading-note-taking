@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,42 +28,32 @@ import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
 
 /**
- * A capture lives in the queue only while it still needs something:
- * waiting (Queued), saving to disk (Saving), being recognized (Ocr),
- * missing a page number (NeedsPage), or failed (Failed). The moment it
- * becomes a proper page it leaves the queue — there is no "done" state.
+ * Status board for the current OCR batch. Each task is just a status:
+ * queued, saving, recognizing, done, or failed. The board is cleared
+ * when the next batch starts; "收起" only hides it behind a chip.
  */
-enum class ProcessStep { Queued, Saving, Ocr, NeedsPage, Failed }
+enum class ProcessStep { Queued, Saving, Ocr, Done, Failed }
 
 data class ProcessItem(
     val id: String,
     val step: ProcessStep,
-    val pageNumber: Int? = null,
     val message: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
-fun queueSummary(items: List<ProcessItem>): String {
-    val running = items.count { it.step == ProcessStep.Queued || it.step == ProcessStep.Saving || it.step == ProcessStep.Ocr }
-    val needsPage = items.count { it.step == ProcessStep.NeedsPage }
-    val failed = items.count { it.step == ProcessStep.Failed }
-    val parts = buildList {
-        if (running > 0) add("识别中 $running")
-        if (needsPage > 0) add("待填页码 $needsPage")
-        if (failed > 0) add("失败 $failed")
-    }
-    return if (parts.isEmpty()) "处理中" else parts.joinToString(" · ")
-}
+private fun finishedCount(items: List<ProcessItem>) =
+    items.count { it.step == ProcessStep.Done || it.step == ProcessStep.Failed }
 
 @Composable
 fun ProcessingQueueCard(
     items: List<ProcessItem>,
     onRetry: (ProcessItem) -> Unit,
-    onFillPage: (ProcessItem) -> Unit = {},
     onDismiss: (ProcessItem) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val finished = finishedCount(items)
+    val total = items.size.coerceAtLeast(1)
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -74,7 +65,7 @@ fun ProcessingQueueCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(queueSummary(items), fontSize = 12.sp, color = Sumi)
+                Text("OCR $finished/${items.size}", fontSize = 12.sp, color = Sumi)
                 Spacer(Modifier.weight(1f))
                 Text(
                     "收起",
@@ -83,8 +74,14 @@ fun ProcessingQueueCard(
                     modifier = Modifier.clickable(onClick = onClose).padding(4.dp),
                 )
             }
+            LinearProgressIndicator(
+                progress = finished / total.toFloat(),
+                modifier = Modifier.fillMaxWidth(),
+                color = Accent,
+                trackColor = SumiSoft.copy(alpha = 0.25f),
+            )
             items.forEach { item ->
-                ProcessQueueRow(item, onRetry, onFillPage, onDismiss)
+                ProcessQueueRow(item, onRetry, onDismiss)
             }
         }
     }
@@ -111,7 +108,7 @@ fun ProcessingQueueChip(
             if (hasActive) {
                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
             }
-            Text(queueSummary(items), fontSize = 12.sp, color = Sumi)
+            Text("OCR ${finishedCount(items)}/${items.size}", fontSize = 12.sp, color = Sumi)
         }
     }
 }
@@ -120,13 +117,12 @@ fun ProcessingQueueChip(
 private fun ProcessQueueRow(
     item: ProcessItem,
     onRetry: (ProcessItem) -> Unit,
-    onFillPage: (ProcessItem) -> Unit,
     onDismiss: (ProcessItem) -> Unit,
 ) {
-    val clickAction = when (item.step) {
-        ProcessStep.NeedsPage -> { { onFillPage(item) } }
-        ProcessStep.Failed -> { { onRetry(item) } }
-        else -> null
+    val clickAction = if (item.step == ProcessStep.Failed) {
+        { onRetry(item) }
+    } else {
+        null
     }
     val rowModifier = Modifier
         .fillMaxWidth()
@@ -143,14 +139,10 @@ private fun ProcessQueueRow(
             ProcessStep.Ocr -> {
                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
                 Spacer(Modifier.width(8.dp))
-                Text("OCR识别中…", fontSize = 12.sp, color = Accent)
+                Text("识别中…", fontSize = 12.sp, color = Accent)
             }
-            ProcessStep.NeedsPage -> {
-                Text("待填页码 · 点此填写", fontSize = 12.sp, color = Accent)
-            }
-            ProcessStep.Failed -> {
-                Text("⚠ 失败 · 点此重试", fontSize = 12.sp, color = Color(0xFFB3524A))
-            }
+            ProcessStep.Done -> Text("✓", fontSize = 12.sp, color = Sumi)
+            ProcessStep.Failed -> Text("⚠ 失败 · 点此重试", fontSize = 12.sp, color = Color(0xFFB3524A))
         }
         item.message?.takeIf { it.isNotBlank() && item.step == ProcessStep.Failed }?.let {
             Spacer(Modifier.width(8.dp))

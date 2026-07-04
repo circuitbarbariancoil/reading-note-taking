@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
@@ -25,11 +26,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,9 +60,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 /**
- * Text action that triggers on pointer-down. On some devices, when the soft
- * keyboard is open, the modal sheet re-anchors mid-gesture and an up-based
- * click gets cancelled, so a plain button never fires.
+ * Text action that triggers on pointer-down, so a tap can't be cancelled
+ * by any layout shift caused by the soft keyboard.
  */
 @Composable
 private fun SheetActionText(
@@ -98,7 +95,7 @@ data class PageSheetAction(
     val onClick: () -> Unit,
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PageNumberSheet(
     title: String,
@@ -113,7 +110,6 @@ fun PageNumberSheet(
     confirmEnabled: (Int) -> Boolean = { true },
     secondaryActions: List<PageSheetAction> = emptyList(),
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var enlarged by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -133,20 +129,30 @@ fun PageNumberSheet(
         }
     }
 
-    ModalBottomSheet(
+    // Plain Dialog instead of ModalBottomSheet: the M3 sheet mis-positions its
+    // touch targets while the IME animates, so taps land outside the buttons.
+    Dialog(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = Paper,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
                 .imePadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 20.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .navigationBarsPadding(),
+            contentAlignment = Alignment.BottomCenter,
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    .background(Paper)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Sumi)
 
             if (imagePath != null) {
@@ -230,6 +236,7 @@ fun PageNumberSheet(
             }
 
             Spacer(modifier = Modifier.size(8.dp))
+            }
         }
     }
 

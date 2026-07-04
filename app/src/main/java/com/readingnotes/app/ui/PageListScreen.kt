@@ -69,7 +69,6 @@ fun PageListScreen(
     onOcrCapture: (Capture) -> Unit,
     processItems: List<ProcessItem> = emptyList(),
     onRetryProcessItem: (ProcessItem) -> Unit = {},
-    onFillProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
     queueCollapsed: Boolean = false,
     onExpandQueue: () -> Unit = {},
@@ -243,7 +242,6 @@ fun PageListScreen(
                     ProcessingQueueCard(
                         items = processItems,
                         onRetry = onRetryProcessItem,
-                        onFillPage = onFillProcessItem,
                         onDismiss = onDismissProcessItem,
                         onClose = onCollapseQueue,
                     )
