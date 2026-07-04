@@ -71,6 +71,9 @@ fun PageListScreen(
     onFillProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
     batchProcessItems: List<ProcessItem> = emptyList(),
+    batchQueueCollapsed: Boolean = false,
+    onExpandBatchQueue: () -> Unit = {},
+    onCollapseBatchQueue: () -> Unit = {},
     onClearBatchProcessItems: () -> Unit = {},
     onAssignPage: (Capture, Int) -> Unit,
     onFillPageNumber: (Capture) -> Unit,
@@ -232,13 +235,22 @@ fun PageListScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (batchProcessItems.isNotEmpty()) {
-                    BatchProcessingQueueCard(
-                        items = batchProcessItems,
-                        onRetry = onRetryProcessItem,
-                        onFillPage = onFillProcessItem,
-                        onDismiss = onDismissProcessItem,
-                        onClearCompleted = onClearBatchProcessItems,
-                    )
+                    if (batchQueueCollapsed) {
+                        BatchProcessingQueueChip(
+                            items = batchProcessItems,
+                            onExpand = onExpandBatchQueue,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                    } else {
+                        BatchProcessingQueueCard(
+                            items = batchProcessItems,
+                            onRetry = onRetryProcessItem,
+                            onFillPage = onFillProcessItem,
+                            onDismiss = onDismissProcessItem,
+                            onClearCompleted = onClearBatchProcessItems,
+                            onClose = onCollapseBatchQueue,
+                        )
+                    }
                 }
                 if (processItems.isNotEmpty()) {
                     ProcessingQueueCard(

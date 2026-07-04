@@ -69,6 +69,7 @@ fun BatchProcessingQueueCard(
     onFillPage: (ProcessItem) -> Unit = {},
     onDismiss: (ProcessItem) -> Unit,
     onClearCompleted: () -> Unit,
+    onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val completed = items.count { it.step == ProcessStep.Done }
@@ -97,7 +98,7 @@ fun BatchProcessingQueueCard(
                     "关闭",
                     fontSize = 11.sp,
                     color = Hairline,
-                    modifier = Modifier.clickable(onClick = onClearCompleted).padding(4.dp),
+                    modifier = Modifier.clickable(onClick = onClose).padding(4.dp),
                 )
             }
             LinearProgressIndicator(
@@ -109,6 +110,32 @@ fun BatchProcessingQueueCard(
             items.forEach { item ->
                 ProcessQueueRow(item, onRetry, onFillPage, onDismiss)
             }
+        }
+    }
+}
+
+@Composable
+fun BatchProcessingQueueChip(
+    items: List<ProcessItem>,
+    onExpand: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hasActive = items.any { it.step == ProcessStep.Ocr || it.step == ProcessStep.Queued }
+    Card(
+        modifier = modifier.clickable(onClick = onExpand),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (hasActive) {
+                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
+            }
+            Text("处理队列 · ${items.size}", fontSize = 12.sp, color = Sumi)
         }
     }
 }

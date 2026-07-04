@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
     private val ocrStatus = mutableStateMapOf<String, OcrJobState>()
     private val processQueue = mutableStateListOf<ProcessItem>()
     private val batchProcessQueue = mutableStateListOf<ProcessItem>()
+    private var batchQueueCollapsed by mutableStateOf(false)
     private var pendingPageNumber by mutableStateOf<PendingPageNumber?>(null)
     private var entryEditTarget by mutableStateOf<EntryEditTarget?>(null)
     private var entryEditorFromBrowser by mutableStateOf(false)
@@ -171,7 +172,10 @@ class MainActivity : ComponentActivity() {
                         onRetryProcessItem = { item -> retryProcessItem(item) },
                         onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
-                        onClearBatchProcessItems = { clearBatchProcessQueue() },
+                        batchQueueCollapsed = batchQueueCollapsed,
+                        onExpandBatchQueue = { batchQueueCollapsed = false },
+                        onCollapseBatchQueue = { batchQueueCollapsed = true },
+                        onClearBatchProcessItems = { clearCompletedBatchProcessItems() },
                         onAssignPage = { capture, pageNumber -> assignPage(capture, pageNumber) },
                         onFillPageNumber = { capture ->
                             capture.ocrText?.let { pendingPageNumber = PendingPageNumber(capture, it) }
@@ -255,7 +259,10 @@ class MainActivity : ComponentActivity() {
                         onRetryProcessItem = { item -> retryProcessItem(item) },
                         onFillProcessItem = { item -> fillProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
-                        onClearBatchProcessItems = { clearBatchProcessQueue() },
+                        batchQueueCollapsed = batchQueueCollapsed,
+                        onExpandBatchQueue = { batchQueueCollapsed = false },
+                        onCollapseBatchQueue = { batchQueueCollapsed = true },
+                        onClearBatchProcessItems = { clearCompletedBatchProcessItems() },
                         focusRange = workbenchFocus,
                     )
                 }
@@ -512,6 +519,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun batchOcr() {
+        batchQueueCollapsed = false
         if (isMonthlyApiBudgetExceeded()) {
             showMonthlyApiBudgetError()
             return
@@ -712,8 +720,8 @@ class MainActivity : ComponentActivity() {
         removeProcessItem(batchProcessQueue, item.id)
     }
 
-    private fun clearBatchProcessQueue() {
-        batchProcessQueue.clear()
+    private fun clearCompletedBatchProcessItems() {
+        batchProcessQueue.removeAll { it.step == ProcessStep.Done }
     }
 
     private fun deleteCapture(capture: Capture) {
