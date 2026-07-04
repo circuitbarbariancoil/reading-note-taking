@@ -82,6 +82,7 @@ fun WorkbenchScreen(
     onDismissOcrError: () -> Unit = {},
     onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
     onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
+    onDeletePage: (com.readingnotes.app.model.Page) -> Unit = {},
     processItems: List<ProcessItem> = emptyList(),
     onRetryProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
@@ -297,6 +298,10 @@ fun WorkbenchScreen(
                 } else {
                     onOcrPage(page)
                 }
+            },
+            onDelete = {
+                pageMenuOpen = false
+                onDeletePage(page)
             },
         )
     }
@@ -515,7 +520,7 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
     }
 }
 
-/** Per-page actions: change the page number or re-run OCR. */
+/** Per-page actions: change the page number, re-run OCR, or delete. */
 @Composable
 private fun PageMenuDialog(
     page: com.readingnotes.app.model.Page,
@@ -523,6 +528,7 @@ private fun PageMenuDialog(
     onDismiss: () -> Unit,
     onChangePageNumber: (Int) -> Unit,
     onReOcr: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     PageNumberSheet(
         title = "页面 p.${page.page}",
@@ -536,6 +542,11 @@ private fun PageMenuDialog(
                 label = if (page.ocrText == null) "OCR" else "重新 OCR",
                 enabled = !ocrBusy,
                 onClick = onReOcr,
+            ),
+            PageSheetAction(
+                label = "删除此页",
+                danger = true,
+                onClick = onDelete,
             ),
         ),
         onConfirm = onChangePageNumber,

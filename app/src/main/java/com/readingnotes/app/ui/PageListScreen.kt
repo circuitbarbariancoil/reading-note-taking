@@ -77,6 +77,7 @@ fun PageListScreen(
     onFillPageNumber: (Capture) -> Unit,
     onDeleteCapture: (Capture) -> Unit,
     onEntries: () -> Unit = {},
+    onExportZip: () -> Unit = {},
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
     var assignPageDialog by remember { mutableStateOf<Capture?>(null) }
@@ -124,6 +125,18 @@ fun PageListScreen(
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color(0xFFEDE6D6))
                         .clickable(onClick = onEntries)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+                Spacer(Modifier.padding(horizontal = 4.dp))
+                // Export ZIP button
+                Text(
+                    "导出",
+                    fontSize = 12.sp,
+                    color = Accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFFEDE6D6))
+                        .clickable(onClick = onExportZip)
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                 )
                 Spacer(Modifier.padding(horizontal = 4.dp))

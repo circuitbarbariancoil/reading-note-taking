@@ -101,6 +101,11 @@ class MainActivity : ComponentActivity() {
     private var captureShotCount by mutableStateOf(0)
     private var captureSaving by mutableStateOf(false)
 
+    // Sync status
+    private var syncPendingCount by mutableStateOf(0)
+    private var lastSyncTime by mutableStateOf<String?>(null)
+    private var restoreStatus by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsStore = SettingsStore(applicationContext)
@@ -178,6 +183,7 @@ class MainActivity : ComponentActivity() {
                             capture.ocrText?.let { pendingPageNumber = PendingPageNumber(capture, it) }
                         },
                         onDeleteCapture = { capture -> deleteCapture(capture) },
+                        onExportZip = { exportBookZip() },
                         onEntries = {
                             entryBrowserBookUid = book.uid
                             currentScreen = ShellScreen.EntryBrowser
@@ -216,7 +222,11 @@ class MainActivity : ComponentActivity() {
                     appSettings = settingsStore.read()
                 },
                 onProviderSettings = { currentScreen = ShellScreen.ProviderSettings },
+                onRestoreFromDropbox = { restoreFromDropbox() },
                 onBack = { currentScreen = ShellScreen.BookShelf },
+                syncPendingCount = syncPendingCount,
+                lastSyncTime = lastSyncTime,
+                restoreStatus = restoreStatus,
             )
 
             ShellScreen.ProviderSettings -> ProviderSettingsScreen(
@@ -251,6 +261,7 @@ class MainActivity : ComponentActivity() {
                         onCapture = { openCapture(fromWorkbench = true) },
                         onOcrPage = { page -> ocrPage(page) },
                         onChangePageNumber = { page, newNumber -> changePageNumber(page, newNumber) },
+                        onDeletePage = { page -> deletePage(page) },
                         processItems = processQueue,
                         onRetryProcessItem = { item -> retryProcessItem(item) },
                         onDismissProcessItem = { item -> dismissProcessItem(item) },
@@ -666,6 +677,17 @@ class MainActivity : ComponentActivity() {
         removeProcessItem(processQueue, item.id)
     }
 
+    private fun deletePage(page: Page) {
+        val book = activeBook ?: return
+        lifecycleScope.launch {
+            val updated = bookRepository.deletePage(book, page)
+            activeBook = updated
+            activePageIndex = (activePageIndex).coerceIn(0, (updated.pages.size - 1).coerceAtLeast(0))
+            if (updated.pages.isEmpty()) currentScreen = ShellScreen.PageList
+            syncToDropbox(updated)
+        }
+    }
+
     private fun deleteCapture(capture: Capture) {
         val book = activeBook ?: return
         lifecycleScope.launch {
@@ -715,6 +737,41 @@ class MainActivity : ComponentActivity() {
     private suspend fun syncToDropbox(book: Book) {
         val credential = appSettings.dropboxCredentialJson ?: return
         runCatching { bookRepository.persist(book, credential) }
+        refreshSyncStatus()
+    }
+
+    private fun refreshSyncStatus() {
+        val store = com.readingnotes.app.dropbox.SyncQueueStore(applicationContext)
+        syncPendingCount = store.peekAll().size
+    }
+
+    private fun exportBookZip() {
+        val book = activeBook ?: return
+        lifecycleScope.launch {
+            val zipFile = bookRepository.exportBookZip(book)
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this@MainActivity,
+                "$packageName.fileprovider",
+                zipFile,
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(android.content.Intent.createChooser(intent, "导出书籍"))
+        }
+    }
+
+    private fun restoreFromDropbox() {
+        val credential = appSettings.dropboxCredentialJson ?: return
+        restoreStatus = "正在扫描 Dropbox…"
+        lifecycleScope.launch {
+            val count = bookRepository.restoreFromDropbox(credential) { msg ->
+                restoreStatus = msg
+            }
+            restoreStatus = if (count > 0) "已恢复 $count 本书" else "没有需要恢复的书籍"
+        }
     }
 
     override fun onResume() {
@@ -725,6 +782,7 @@ class MainActivity : ComponentActivity() {
             )
             appSettings = settingsStore.read()
         }
+        refreshSyncStatus()
     }
 
     private fun startDropboxConnect() {

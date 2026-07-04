@@ -365,6 +365,30 @@ class BookRepository(
         }
     }
 
+    /** Delete a processed page, its archive image, related entries & highlights. */
+    suspend fun deletePage(book: Book, page: Page): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            // Delete archive image from disk
+            page.archiveImage?.let { rel ->
+                runCatching { archiveFile(base.uid, rel).delete() }
+            }
+            // Enqueue Dropbox deletion of archive
+            page.archiveImage?.let { rel ->
+                syncQueueStore.enqueueDelete("${base.dropboxRoot}/$rel")
+                DropboxSyncWorker.trigger(context)
+            }
+            val updated = base.copy(
+                updatedAt = utcNow(),
+                pages = base.pages.filterNot { it.page == page.page && it.addedAt == page.addedAt },
+                entries = base.entries.filterNot { it.page == page.page },
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /** Delete an unprocessed capture (photo) and its image file. */
     suspend fun deleteCapture(
         book: Book,
@@ -381,6 +405,87 @@ class BookRepository(
             cachedBook = updated
             updated
         }
+    }
+
+    /**
+     * Restore books from Dropbox: scans /ReadingVault/books/, downloads book.json
+     * and all archive images for each book not already present locally.
+     * Returns the number of books restored.
+     */
+    suspend fun restoreFromDropbox(credentialJson: String, onProgress: (String) -> Unit = {}): Int =
+        withContext(Dispatchers.IO) {
+            val client = DropboxClient.fromCredentialJson(credentialJson)
+            val bookFolders = try {
+                client.listFolders("/ReadingVault/books")
+            } catch (_: Exception) {
+                onProgress("无法访问 /ReadingVault/books")
+                return@withContext 0
+            }
+            var restoredCount = 0
+            for (uid in bookFolders) {
+                val localJson = bookJsonFile(uid)
+                if (localJson.exists()) continue // already local
+                onProgress("正在恢复: $uid")
+                try {
+                    val jsonBytes = client.downloadFile("/ReadingVault/books/$uid/book.json")
+                    val book = BookStore.decode(String(jsonBytes, Charsets.UTF_8))
+                    localJson.parentFile?.mkdirs()
+                    localJson.writeText(String(jsonBytes, Charsets.UTF_8))
+                    // Download archive images
+                    val files = try { client.listFilesRecursive("/ReadingVault/books/$uid") } catch (_: Exception) { emptyList() }
+                    for (filePath in files) {
+                        if (filePath.endsWith(".webp") || filePath.endsWith(".jpg") || filePath.endsWith(".png")) {
+                            val relative = filePath.removePrefix("/readingvault/books/$uid/")
+                            val localFile = File(bookDir(uid), relative)
+                            if (!localFile.exists()) {
+                                localFile.parentFile?.mkdirs()
+                                val bytes = client.downloadFile(filePath)
+                                localFile.writeBytes(bytes)
+                            }
+                        }
+                    }
+                    restoredCount++
+                    onProgress("已恢复: ${book.title}")
+                } catch (e: Exception) {
+                    onProgress("恢复失败 ($uid): ${e.message?.take(60)}")
+                }
+            }
+            restoredCount
+        }
+
+    /**
+     * Export a book as a ZIP file containing book.json + all archive images.
+     * Returns the path to the written ZIP file in the app's cache dir.
+     */
+    suspend fun exportBookZip(book: Book): File = withContext(Dispatchers.IO) {
+        val base = loadBook(book.uid) ?: book
+        val zipFile = File(context.cacheDir, "${base.title.take(20)}_${base.uid.take(8)}.zip")
+        java.util.zip.ZipOutputStream(zipFile.outputStream().buffered()).use { zip ->
+            // book.json
+            zip.putNextEntry(java.util.zip.ZipEntry("book.json"))
+            zip.write(BookStore.encode(base).toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            // archive images
+            for (page in base.pages) {
+                val rel = page.archiveImage ?: continue
+                val file = archiveFile(base.uid, rel)
+                if (file.exists()) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(rel))
+                    zip.write(file.readBytes())
+                    zip.closeEntry()
+                }
+            }
+            // unprocessed capture images
+            for (capture in base.captures) {
+                val file = File(capture.imagePath)
+                if (file.exists()) {
+                    zip.putNextEntry(java.util.zip.ZipEntry("captures/${file.name}"))
+                    zip.write(file.readBytes())
+                    zip.closeEntry()
+                }
+            }
+        }
+        zipFile
     }
 
     private fun buildPageFromCapture(
