@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,7 +26,13 @@ import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
 
-enum class ProcessStep { Queued, Saving, Ocr, NeedsPage, Done, Failed }
+/**
+ * A capture lives in the queue only while it still needs something:
+ * waiting (Queued), saving to disk (Saving), being recognized (Ocr),
+ * missing a page number (NeedsPage), or failed (Failed). The moment it
+ * becomes a proper page it leaves the queue — there is no "done" state.
+ */
+enum class ProcessStep { Queued, Saving, Ocr, NeedsPage, Failed }
 
 data class ProcessItem(
     val id: String,
@@ -37,43 +42,27 @@ data class ProcessItem(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
+fun queueSummary(items: List<ProcessItem>): String {
+    val running = items.count { it.step == ProcessStep.Queued || it.step == ProcessStep.Saving || it.step == ProcessStep.Ocr }
+    val needsPage = items.count { it.step == ProcessStep.NeedsPage }
+    val failed = items.count { it.step == ProcessStep.Failed }
+    val parts = buildList {
+        if (running > 0) add("识别中 $running")
+        if (needsPage > 0) add("待填页码 $needsPage")
+        if (failed > 0) add("失败 $failed")
+    }
+    return if (parts.isEmpty()) "处理中" else parts.joinToString(" · ")
+}
+
 @Composable
 fun ProcessingQueueCard(
     items: List<ProcessItem>,
     onRetry: (ProcessItem) -> Unit,
     onFillPage: (ProcessItem) -> Unit = {},
     onDismiss: (ProcessItem) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items.forEach { item ->
-                ProcessQueueRow(item, onRetry, onFillPage, onDismiss)
-            }
-        }
-    }
-}
-
-@Composable
-fun BatchProcessingQueueCard(
-    items: List<ProcessItem>,
-    onRetry: (ProcessItem) -> Unit,
-    onFillPage: (ProcessItem) -> Unit = {},
-    onDismiss: (ProcessItem) -> Unit,
-    onClearCompleted: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val completed = items.count { it.step == ProcessStep.Done }
-    val total = items.size.coerceAtLeast(1)
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -85,28 +74,15 @@ fun BatchProcessingQueueCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("已完成 $completed / ${items.size}", fontSize = 12.sp, color = Sumi)
+                Text(queueSummary(items), fontSize = 12.sp, color = Sumi)
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "清除已完成",
-                    fontSize = 11.sp,
-                    color = Accent,
-                    modifier = Modifier.clickable(onClick = onClearCompleted).padding(4.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    "关闭",
+                    "收起",
                     fontSize = 11.sp,
                     color = Hairline,
                     modifier = Modifier.clickable(onClick = onClose).padding(4.dp),
                 )
             }
-            LinearProgressIndicator(
-                progress = completed / total.toFloat(),
-                modifier = Modifier.fillMaxWidth(),
-                color = Accent,
-                trackColor = SumiSoft.copy(alpha = 0.25f),
-            )
             items.forEach { item ->
                 ProcessQueueRow(item, onRetry, onFillPage, onDismiss)
             }
@@ -115,12 +91,12 @@ fun BatchProcessingQueueCard(
 }
 
 @Composable
-fun BatchProcessingQueueChip(
+fun ProcessingQueueChip(
     items: List<ProcessItem>,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val hasActive = items.any { it.step == ProcessStep.Ocr || it.step == ProcessStep.Queued }
+    val hasActive = items.any { it.step == ProcessStep.Ocr || it.step == ProcessStep.Queued || it.step == ProcessStep.Saving }
     Card(
         modifier = modifier.clickable(onClick = onExpand),
         shape = RoundedCornerShape(14.dp),
@@ -135,7 +111,7 @@ fun BatchProcessingQueueChip(
             if (hasActive) {
                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
             }
-            Text("处理队列 · ${items.size}", fontSize = 12.sp, color = Sumi)
+            Text(queueSummary(items), fontSize = 12.sp, color = Sumi)
         }
     }
 }
@@ -163,21 +139,17 @@ private fun ProcessQueueRow(
     ) {
         when (item.step) {
             ProcessStep.Queued -> Text("排队中", fontSize = 12.sp, color = SumiSoft)
-            ProcessStep.Saving -> Text("压缩中", fontSize = 12.sp, color = SumiSoft)
+            ProcessStep.Saving -> Text("保存中…", fontSize = 12.sp, color = SumiSoft)
             ProcessStep.Ocr -> {
                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
                 Spacer(Modifier.width(8.dp))
                 Text("OCR识别中…", fontSize = 12.sp, color = Accent)
             }
             ProcessStep.NeedsPage -> {
-                Text("待填页码", fontSize = 12.sp, color = Accent)
-            }
-            ProcessStep.Done -> {
-                val pageLabel = item.pageNumber?.toString() ?: "?"
-                Text("✓ 第 $pageLabel 页已识别", fontSize = 12.sp, color = Sumi)
+                Text("待填页码 · 点此填写", fontSize = 12.sp, color = Accent)
             }
             ProcessStep.Failed -> {
-                Text("⚠ 失败·将重试", fontSize = 12.sp, color = Color(0xFFB3524A))
+                Text("⚠ 失败 · 点此重试", fontSize = 12.sp, color = Color(0xFFB3524A))
             }
         }
         item.message?.takeIf { it.isNotBlank() && item.step == ProcessStep.Failed }?.let {

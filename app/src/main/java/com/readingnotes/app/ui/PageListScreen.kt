@@ -71,11 +71,9 @@ fun PageListScreen(
     onRetryProcessItem: (ProcessItem) -> Unit = {},
     onFillProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
-    batchProcessItems: List<ProcessItem> = emptyList(),
-    batchQueueCollapsed: Boolean = false,
-    onExpandBatchQueue: () -> Unit = {},
-    onCollapseBatchQueue: () -> Unit = {},
-    onClearBatchProcessItems: () -> Unit = {},
+    queueCollapsed: Boolean = false,
+    onExpandQueue: () -> Unit = {},
+    onCollapseQueue: () -> Unit = {},
     onAssignPage: (Capture, Int) -> Unit,
     onFillPageNumber: (Capture) -> Unit,
     onDeleteCapture: (Capture) -> Unit,
@@ -230,35 +228,24 @@ fun PageListScreen(
             }
         }
 
-        if (processItems.isNotEmpty() || batchProcessItems.isNotEmpty()) {
+        if (processItems.isNotEmpty()) {
             Column(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (batchProcessItems.isNotEmpty()) {
-                    if (batchQueueCollapsed) {
-                        BatchProcessingQueueChip(
-                            items = batchProcessItems,
-                            onExpand = onExpandBatchQueue,
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                        )
-                    } else {
-                        BatchProcessingQueueCard(
-                            items = batchProcessItems,
-                            onRetry = onRetryProcessItem,
-                            onFillPage = onFillProcessItem,
-                            onDismiss = onDismissProcessItem,
-                            onClearCompleted = onClearBatchProcessItems,
-                            onClose = onCollapseBatchQueue,
-                        )
-                    }
-                }
-                if (processItems.isNotEmpty()) {
+                if (queueCollapsed) {
+                    ProcessingQueueChip(
+                        items = processItems,
+                        onExpand = onExpandQueue,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                } else {
                     ProcessingQueueCard(
                         items = processItems,
                         onRetry = onRetryProcessItem,
                         onFillPage = onFillProcessItem,
                         onDismiss = onDismissProcessItem,
+                        onClose = onCollapseQueue,
                     )
                 }
             }

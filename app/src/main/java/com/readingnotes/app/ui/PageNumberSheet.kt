@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -27,7 +29,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +60,36 @@ import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+
+/**
+ * Text action that triggers on pointer-down. On some devices, when the soft
+ * keyboard is open, the modal sheet re-anchors mid-gesture and an up-based
+ * click gets cancelled, so a plain button never fires.
+ */
+@Composable
+private fun SheetActionText(
+    label: String,
+    color: Color,
+    onPress: () -> Unit,
+    enabled: Boolean = true,
+) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 64.dp, minHeight = 44.dp)
+            .pointerInput(enabled) {
+                detectTapGestures(onPress = { if (enabled) onPress() })
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (enabled) color else SumiSoft.copy(alpha = 0.4f),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 10.dp),
+        )
+    }
+}
 
 data class PageSheetAction(
     val label: String,
@@ -177,12 +209,10 @@ fun PageNumberSheet(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         secondaryActions.forEach { action ->
-                            TextButton(onClick = action.onClick, enabled = action.enabled) {
-                                Text(action.label, color = if (action.danger) Color(0xFFB3524A) else Accent)
-                            }
+                            SheetActionText(action.label, enabled = action.enabled, color = if (action.danger) Color(0xFFB3524A) else Accent, onPress = action.onClick)
                         }
-                        TextButton(onClick = onDismiss) { Text(dismissLabel, color = SumiSoft) }
-                        TextButton(onClick = ::confirmIfValid, enabled = confirmAllowed) { Text(confirmLabel, color = Accent) }
+                        SheetActionText(dismissLabel, color = SumiSoft, onPress = onDismiss)
+                        SheetActionText(confirmLabel, enabled = confirmAllowed, color = Accent, onPress = ::confirmIfValid)
                     }
                 } else {
                     Row(
@@ -190,13 +220,11 @@ fun PageNumberSheet(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         secondaryActions.forEach { action ->
-                            TextButton(onClick = action.onClick, enabled = action.enabled) {
-                                Text(action.label, color = if (action.danger) Color(0xFFB3524A) else Accent)
-                            }
+                            SheetActionText(action.label, enabled = action.enabled, color = if (action.danger) Color(0xFFB3524A) else Accent, onPress = action.onClick)
                         }
                         Spacer(modifier = Modifier.weight(1f))
-                        TextButton(onClick = onDismiss) { Text(dismissLabel, color = SumiSoft) }
-                        TextButton(onClick = ::confirmIfValid, enabled = confirmAllowed) { Text(confirmLabel, color = Accent) }
+                        SheetActionText(dismissLabel, color = SumiSoft, onPress = onDismiss)
+                        SheetActionText(confirmLabel, enabled = confirmAllowed, color = Accent, onPress = ::confirmIfValid)
                     }
                 }
             }
