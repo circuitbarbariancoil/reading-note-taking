@@ -18,6 +18,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
+class DuplicatePageNumberException(pageNumber: Int) : IllegalStateException("第 $pageNumber 页已存在，请换一个页码")
+
 /** Result of processing a capture into a page. */
 sealed class ProcessOutcome {
     data class Done(val book: Book, val page: Page) : ProcessOutcome()
@@ -207,6 +209,9 @@ class BookRepository(
             val now = utcNow()
             val pageNumber = manualPageNumber ?: extractPageNumber(ocrText)
                 ?: return@withLock ProcessOutcome.NeedsPageNumber(ocrText)
+            if (manualPageNumber != null && base.pages.any { it.page == pageNumber }) {
+                throw DuplicatePageNumberException(pageNumber)
+            }
 
             val page = buildPageFromCapture(base, capture, pageNumber, now, ocrText)
             val updated = base.copy(
@@ -232,6 +237,9 @@ class BookRepository(
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
+            if (base.pages.any { it.page == pageNumber }) {
+                throw DuplicatePageNumberException(pageNumber)
+            }
             val now = utcNow()
             val page = buildPageFromCapture(base, capture, pageNumber, now, ocrText = null)
             val updated = base.copy(
@@ -309,6 +317,17 @@ class BookRepository(
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
+            val currentPage = base.pages.firstOrNull { it.page == page.page && it.addedAt == page.addedAt }
+                ?: page
+            if (currentPage.page == newNumber) {
+                return@withLock base
+            }
+            val duplicate = base.pages.firstOrNull {
+                it.page == newNumber && !(it.page == currentPage.page && it.addedAt == currentPage.addedAt)
+            }
+            if (duplicate != null) {
+                throw DuplicatePageNumberException(newNumber)
+            }
             val now = utcNow()
             val newRelPath = "pages/p%04d_archive.webp".format(newNumber)
             val oldRel = page.archiveImage
@@ -324,14 +343,14 @@ class BookRepository(
             val updated = base.copy(
                 updatedAt = now,
                 pages = base.pages.map {
-                    if (it.page == page.page && it.addedAt == page.addedAt) {
+                    if (it.page == currentPage.page && it.addedAt == currentPage.addedAt) {
                         it.copy(page = newNumber, archiveImage = if (oldRel != null) newRelPath else null)
                     } else {
                         it
                     }
                 }.sortedBy { it.page },
                 entries = base.entries.map {
-                    if (it.page == page.page) it.copy(page = newNumber) else it
+                    if (it.page == currentPage.page) it.copy(page = newNumber) else it
                 },
             )
             saveBook(updated)

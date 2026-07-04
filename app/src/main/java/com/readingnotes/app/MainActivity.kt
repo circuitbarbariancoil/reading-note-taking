@@ -36,6 +36,7 @@ import com.readingnotes.app.model.Entry
 import com.readingnotes.app.model.MarkupText
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.dropbox.DropboxSyncWorker
+import com.readingnotes.app.repository.DuplicatePageNumberException
 import com.readingnotes.app.repository.BookRepository
 import com.readingnotes.app.repository.ProcessOutcome
 import com.readingnotes.app.settings.AppSettings
@@ -511,6 +512,10 @@ class MainActivity : ComponentActivity() {
                     upsertProcessItem(targetList, pending.capture.id, ProcessStep.Done, pageNumber = outcome.page.page, autoRemoveDone = targetList !== processQueue)
                     syncToDropbox(outcome.book)
                 }
+            } catch (e: DuplicatePageNumberException) {
+                ocrErrorMessage = e.message
+                val targetList = if (batchProcessQueue.any { it.id == pending.capture.id }) batchProcessQueue else processQueue
+                upsertProcessItem(targetList, pending.capture.id, ProcessStep.NeedsPage, message = pending.ocrText, autoRemoveDone = targetList !== processQueue)
             } catch (t: Throwable) {
                 ocrStatus[pending.capture.id] = OcrJobState.Failed
                 upsertProcessItem(processQueue, pending.capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
@@ -583,35 +588,43 @@ class MainActivity : ComponentActivity() {
     private fun assignPage(capture: Capture, pageNumber: Int) {
         val book = activeBook ?: return
         lifecycleScope.launch {
-            val ocrText = capture.ocrText
-            val updated = if (ocrText != null) {
-                val outcome = bookRepository.processCapture(
-                    book,
-                    capture,
-                    appSettings.geminiApiKey.orEmpty(),
-                    manualPageNumber = pageNumber,
-                    precomputedOcrText = ocrText,
-                    providerConfig = appSettings.providerConfig,
-                    onApiCall = { providerId -> recordApiCall(providerId) },
-                )
-                (outcome as ProcessOutcome.Done).book
-            } else {
-                bookRepository.assignPageNumber(book, capture, pageNumber)
+            try {
+                val ocrText = capture.ocrText
+                val updated = if (ocrText != null) {
+                    val outcome = bookRepository.processCapture(
+                        book,
+                        capture,
+                        appSettings.geminiApiKey.orEmpty(),
+                        manualPageNumber = pageNumber,
+                        precomputedOcrText = ocrText,
+                        providerConfig = appSettings.providerConfig,
+                        onApiCall = { providerId -> recordApiCall(providerId) },
+                    )
+                    (outcome as ProcessOutcome.Done).book
+                } else {
+                    bookRepository.assignPageNumber(book, capture, pageNumber)
+                }
+                activeBook = updated
+                syncToDropbox(updated)
+            } catch (e: DuplicatePageNumberException) {
+                ocrErrorMessage = e.message
             }
-            activeBook = updated
-            syncToDropbox(updated)
         }
     }
 
     private fun changePageNumber(page: Page, newNumber: Int) {
         val book = activeBook ?: return
         lifecycleScope.launch {
-            val updated = bookRepository.changePageNumber(book, page, newNumber)
-            activePageIndex = updated.pages
-                .indexOfFirst { it.page == newNumber && it.addedAt == page.addedAt }
-                .coerceAtLeast(0)
-            activeBook = updated
-            syncToDropbox(updated)
+            try {
+                val updated = bookRepository.changePageNumber(book, page, newNumber)
+                activePageIndex = updated.pages
+                    .indexOfFirst { it.page == newNumber && it.addedAt == page.addedAt }
+                    .coerceAtLeast(0)
+                activeBook = updated
+                syncToDropbox(updated)
+            } catch (e: DuplicatePageNumberException) {
+                ocrErrorMessage = e.message
+            }
         }
     }
 

@@ -174,7 +174,7 @@ private fun ProcessQueueRow(
             }
             ProcessStep.Done -> {
                 val pageLabel = item.pageNumber?.toString() ?: "?"
-                Text("✓ p.$pageLabel", fontSize = 12.sp, color = Sumi)
+                Text("✓ 第 $pageLabel 页已识别", fontSize = 12.sp, color = Sumi)
             }
             ProcessStep.Failed -> {
                 Text("⚠ 失败·将重试", fontSize = 12.sp, color = Color(0xFFB3524A))

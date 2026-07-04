@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -156,7 +157,7 @@ fun PageListScreen(
                     item(span = { GridItemSpan(3) }) {
                         Text("已处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
                     }
-                    items(sortedPages, key = { "page-${it.page}" }) { page ->
+                    itemsIndexed(sortedPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
                         PageThumbnail(page, book, repository, onClick = { onOpenPage(page) })
                     }
                 }
