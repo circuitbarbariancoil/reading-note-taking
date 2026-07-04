@@ -46,8 +46,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.readingnotes.app.ui.theme.Accent
@@ -83,7 +85,11 @@ fun PageNumberSheet(
     var enlarged by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
-    var pageNumText by remember(initialValue) { mutableStateOf(initialValue.filter { it.isDigit() }) }
+    var pageNumField by remember(initialValue) {
+        val digits = initialValue.filter { it.isDigit() }
+        mutableStateOf(TextFieldValue(digits, TextRange(digits.length)))
+    }
+    val pageNumText = pageNumField.text
     val parsedValue = pageNumText.toIntOrNull()
     val confirmAllowed = parsedValue != null && confirmEnabled(parsedValue)
 
@@ -148,8 +154,8 @@ fun PageNumberSheet(
             }
 
             OutlinedTextField(
-                value = pageNumText,
-                onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
+                value = pageNumField,
+                onValueChange = { newValue -> if (newValue.text.all { c -> c.isDigit() }) pageNumField = newValue },
                 label = { Text("页码") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(
