@@ -21,11 +21,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +43,8 @@ import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.repository.BookRepository
+import com.readingnotes.app.ui.PageNumberSheet
+import com.readingnotes.app.ui.PageSheetAction
 import com.readingnotes.app.ui.theme.Accent
 import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
@@ -404,39 +403,20 @@ private fun AssignPageDialog(
     onOcr: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    var pageNumText by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("处理照片") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (failed) {
-                    Text("上次 OCR 失败，可重试。", fontSize = 13.sp, color = Color(0xFFB3524A))
-                }
-                Text("OCR 识别文字，或只填页码先占位（回头再 OCR）：", fontSize = 13.sp, color = SumiSoft)
-                OutlinedTextField(
-                    value = pageNumText,
-                    onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
-                    label = { Text("填写页码") },
-                    singleLine = true,
-                )
-            }
+    PageNumberSheet(
+        title = "处理照片",
+        noteText = if (failed) {
+            "上次 OCR 失败，可重试。\nOCR 识别文字，或只填页码先占位（回头再 OCR）："
+        } else {
+            "OCR 识别文字，或只填页码先占位（回头再 OCR）："
         },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onOcr) { Text(if (failed) "重试 OCR" else "OCR") }
-                TextButton(
-                    onClick = { pageNumText.toIntOrNull()?.let { onAssign(it) } },
-                    enabled = pageNumText.toIntOrNull() != null,
-                ) { Text("确定") }
-            }
-        },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onDelete) { Text("删除", color = Color(0xFFB3524A)) }
-                TextButton(onClick = onDismiss) { Text("取消") }
-            }
-        },
+        confirmLabel = "确定",
+        dismissLabel = "取消",
+        secondaryActions = listOf(
+            PageSheetAction(label = if (failed) "重试 OCR" else "OCR", onClick = onOcr),
+            PageSheetAction(label = "删除", danger = true, onClick = onDelete),
+        ),
+        onConfirm = onAssign,
+        onDismiss = onDismiss,
     )
 }

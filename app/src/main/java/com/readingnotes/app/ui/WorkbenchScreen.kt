@@ -59,6 +59,8 @@ import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
+import com.readingnotes.app.ui.PageNumberSheet
+import com.readingnotes.app.ui.PageSheetAction
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -524,39 +526,22 @@ private fun PageMenuDialog(
     onChangePageNumber: (Int) -> Unit,
     onReOcr: () -> Unit,
 ) {
-    var pageNumText by remember { mutableStateOf(page.page.toString()) }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("页面 p.${page.page}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                androidx.compose.material3.OutlinedTextField(
-                    value = pageNumText,
-                    onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
-                    label = { Text("页码") },
-                    singleLine = true,
-                )
-                Text(
-                    if (page.ocrText == null) "此页尚未 OCR。" else "重新 OCR 会覆盖已识别的文字。",
-                    fontSize = 12.sp,
-                    color = SumiSoft,
-                )
-            }
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onReOcr, enabled = !ocrBusy) {
-                    Text(if (page.ocrText == null) "OCR" else "重新 OCR")
-                }
-                TextButton(
-                    onClick = { pageNumText.toIntOrNull()?.let(onChangePageNumber) },
-                    enabled = pageNumText.toIntOrNull()?.let { it != page.page } == true,
-                ) { Text("保存页码") }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
+    PageNumberSheet(
+        title = "页面 p.${page.page}",
+        initialValue = page.page.toString(),
+        confirmLabel = "保存页码",
+        dismissLabel = "取消",
+        noteText = if (page.ocrText == null) "此页尚未 OCR。" else "重新 OCR 会覆盖已识别的文字。",
+        confirmEnabled = { it != page.page },
+        secondaryActions = listOf(
+            PageSheetAction(
+                label = if (page.ocrText == null) "OCR" else "重新 OCR",
+                enabled = !ocrBusy,
+                onClick = onReOcr,
+            ),
+        ),
+        onConfirm = onChangePageNumber,
+        onDismiss = onDismiss,
     )
 }
 

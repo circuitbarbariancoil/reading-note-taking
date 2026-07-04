@@ -1,11 +1,9 @@
 package com.readingnotes.app
 
 import android.os.Bundle
-import android.graphics.BitmapFactory
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,15 +11,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -30,12 +22,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.lifecycleScope
 import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.android.Auth
@@ -59,13 +47,14 @@ import com.readingnotes.app.ui.EntryBrowserScreen
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.ui.EntryEditor
 import com.readingnotes.app.ui.OcrJobState
-import com.readingnotes.app.ui.ProcessItem
-import com.readingnotes.app.ui.ProcessStep
+import com.readingnotes.app.ui.PageNumberSheet
 import com.readingnotes.app.ui.PageListScreen
 import com.readingnotes.app.ui.PaletteScreen
 import com.readingnotes.app.ui.ProviderSettingsScreen
 import com.readingnotes.app.ui.SettingsScreen
 import com.readingnotes.app.ui.WorkbenchScreen
+import com.readingnotes.app.ui.ProcessItem
+import com.readingnotes.app.ui.ProcessStep
 import com.readingnotes.app.ui.theme.ReadingNotesTheme
 import kotlinx.coroutines.launch
 
@@ -352,12 +341,22 @@ class MainActivity : ComponentActivity() {
         }
 
         pendingPageNumber?.let { pending ->
-            PageNumberDialog(
-                captureImagePath = pending.capture.imagePath,
-                ocrText = pending.ocrText,
-                onConfirm = { pageNumber ->
+            val hintLines = pending.ocrText
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .take(2)
+                .toList()
+                .joinToString(" / ")
+            PageNumberSheet(
+                title = "填写页码",
+                imagePath = pending.capture.imagePath,
+                hintText = hintLines.ifBlank { null },
+                confirmLabel = "确定",
+                dismissLabel = "稍后处理",
+                onConfirm = {
                     pendingPageNumber = null
-                    finishWithManualPageNumber(pending, pageNumber)
+                    finishWithManualPageNumber(pending, it)
                 },
                 onDismiss = { pendingPageNumber = null },
             )
@@ -474,7 +473,6 @@ class MainActivity : ComponentActivity() {
                     upsertProcessItem(processQueue, capture.id, ProcessStep.NeedsPage, message = outcome.ocrText)
                     // Keep the recognized text so 稍后处理 doesn't lose or re-bill it.
                     activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
-                    pendingPageNumber = PendingPageNumber(capture, outcome.ocrText)
                 }
             }
         } catch (t: Throwable) {
@@ -785,81 +783,5 @@ class MainActivity : ComponentActivity() {
             DbxRequestConfig.newBuilder(DropboxConfig.REQUEST_NAME).build(),
             DropboxConfig.SCOPES,
         )
-    }
-}
-
-@androidx.compose.runtime.Composable
-private fun PageNumberDialog(
-    captureImagePath: String,
-    ocrText: String,
-    onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var pageNumText by androidx.compose.runtime.remember { mutableStateOf("") }
-    val bitmap = remember(captureImagePath) {
-        BitmapFactory.decodeFile(captureImagePath)
-    }
-    var enlarged by remember { mutableStateOf(false) }
-    val hintLines = remember(ocrText) {
-        ocrText.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .take(2)
-            .toList()
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("OCR 未识别出页码") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("这一页没有识别到页码，请手动填写：")
-                if (hintLines.isNotEmpty()) {
-                    Text(hintLines.joinToString(" / "), fontSize = 12.sp, color = com.readingnotes.app.ui.theme.SumiSoft)
-                }
-                bitmap?.let { bmp ->
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = com.readingnotes.app.ui.theme.Paper),
-                        modifier = Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable { enlarged = true },
-                    ) {
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "OCR 截图缩略图",
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
-                            contentScale = ContentScale.Fit,
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = pageNumText,
-                    onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
-                    label = { Text("页码") },
-                    singleLine = true,
-                )
-            }
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(
-                    onClick = { pageNumText.toIntOrNull()?.let(onConfirm) },
-                    enabled = pageNumText.toIntOrNull() != null,
-                ) { Text("确定") }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("稍后处理") }
-        },
-    )
-
-    if (enlarged && bitmap != null) {
-        Dialog(onDismissRequest = { enlarged = false }) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "OCR 截图原图",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit,
-                )
-            }
-        }
     }
 }
