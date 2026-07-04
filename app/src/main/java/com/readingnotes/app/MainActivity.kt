@@ -438,11 +438,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun runOcrCapture(capture: Capture, jumpToPage: Boolean) {
-        val key = appSettings.geminiApiKey
+        val key = appSettings.geminiApiKey.orEmpty()
         val book = activeBook ?: return
-        if (key.isNullOrBlank()) {
+        if (!appSettings.hasAnyProvider) {
             ocrStatus[capture.id] = OcrJobState.Failed
-            upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = "未设置 API Key")
+            upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = "未配置 OCR 服务（去设置添加）")
             return
         }
         ocrStatus[capture.id] = OcrJobState.Running
@@ -533,11 +533,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun runBatchOcrCapture(capture: Capture) {
-        val key = appSettings.geminiApiKey
+        val key = appSettings.geminiApiKey.orEmpty()
         val book = activeBook ?: return
-        if (key.isNullOrBlank()) {
+        if (!appSettings.hasAnyProvider) {
             ocrStatus[capture.id] = OcrJobState.Failed
-            upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Failed, message = "未设置 API Key", autoRemoveDone = false)
+            upsertProcessItem(batchProcessQueue, capture.id, ProcessStep.Failed, message = "未配置 OCR 服务（去设置添加）", autoRemoveDone = false)
             return
         }
         ocrStatus[capture.id] = OcrJobState.Running
@@ -725,15 +725,15 @@ class MainActivity : ComponentActivity() {
 
     private fun ocrPage(page: Page) {
         val book = activeBook ?: return
-        val key = appSettings.geminiApiKey
+        val key = appSettings.geminiApiKey.orEmpty()
         val statusKey = "page-${page.page}"
         if (isMonthlyApiBudgetExceeded()) {
             showMonthlyApiBudgetError()
             return
         }
-        if (key.isNullOrBlank()) {
+        if (!appSettings.hasAnyProvider) {
             ocrStatus[statusKey] = OcrJobState.Failed
-            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, pageNumber = page.page, message = "未设置 API Key")
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, pageNumber = page.page, message = "未配置 OCR 服务（去设置添加）")
             return
         }
         lifecycleScope.launch {

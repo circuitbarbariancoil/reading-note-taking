@@ -35,7 +35,7 @@ fun HomeScreen(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("当前设置")
                 Text("书名：${settings.bookTitle}")
-                Text("Gemini：${if (settings.hasGeminiKey) "已填写" else "未填写"}")
+                Text("OCR：${if (settings.hasAnyProvider) "已配置" else "未配置"}")
                 Text("Dropbox：${if (settings.hasDropboxCredential) "已连接" else "未连接"}")
             }
         }
