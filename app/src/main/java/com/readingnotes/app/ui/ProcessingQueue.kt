@@ -38,6 +38,7 @@ data class ProcessItem(
     val id: String,
     val step: ProcessStep,
     val message: String? = null,
+    val providerName: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
@@ -139,7 +140,8 @@ private fun ProcessQueueRow(
             ProcessStep.Ocr -> {
                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Accent)
                 Spacer(Modifier.width(8.dp))
-                Text("识别中…", fontSize = 12.sp, color = Accent)
+                val label = if (item.providerName != null) "${item.providerName} 识别中…" else "识别中…"
+                Text(label, fontSize = 12.sp, color = Accent)
             }
             ProcessStep.Done -> Text("✓", fontSize = 12.sp, color = Sumi)
             ProcessStep.Failed -> Text("⚠ 失败 · 点此重试", fontSize = 12.sp, color = Color(0xFFB3524A))

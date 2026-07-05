@@ -64,10 +64,13 @@ fun ProviderSettingsScreen(
     var activeIndex by remember(config) { mutableStateOf(config.activeIndex) }
     var fallback by remember(config) { mutableStateOf(config.fallbackOnError) }
     var roundRobin by remember(config) { mutableStateOf(config.roundRobin) }
+    var parallelOcr by remember(config) { mutableStateOf(config.parallelOcr) }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
 
+    val usableCount = providers.count { it.enabled && it.apiKey.isNotBlank() }
+
     fun save() {
-        onSave(ProviderConfig(providers, activeIndex.coerceIn(0, providers.lastIndex.coerceAtLeast(0)), fallback, roundRobin))
+        onSave(ProviderConfig(providers, activeIndex.coerceIn(0, providers.lastIndex.coerceAtLeast(0)), fallback, roundRobin, parallelOcr))
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Paper).padding(16.dp)) {
@@ -132,6 +135,28 @@ fun ProviderSettingsScreen(
                         Text("每次请求轮流使用不同模型", fontSize = 11.sp, color = SumiSoft)
                     }
                     Switch(checked = roundRobin, onCheckedChange = { roundRobin = it; save() })
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("并行 OCR", fontSize = 14.sp, color = Sumi)
+                        Text(
+                            if (usableCount > 1) "批量识别时 ${usableCount} 个模型同时处理"
+                            else "需要 2 个以上已配置的模型",
+                            fontSize = 11.sp,
+                            color = if (usableCount > 1) SumiSoft else Color(0xFFB3524A),
+                        )
+                    }
+                    Switch(
+                        checked = parallelOcr,
+                        onCheckedChange = { parallelOcr = it; save() },
+                        enabled = usableCount > 1,
+                    )
                 }
             }
         }

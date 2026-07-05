@@ -45,7 +45,12 @@ import com.readingnotes.app.ui.BookShelfScreen
 import com.readingnotes.app.ui.BrowsableEntry
 import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.EntryBrowserScreen
+import com.readingnotes.app.ocr.LlmProvider
 import com.readingnotes.app.ocr.OcrRetryWorker
+import com.readingnotes.app.ocr.ProviderConfig
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import com.readingnotes.app.ui.EntryEditor
 import com.readingnotes.app.ui.OcrJobState
 import com.readingnotes.app.ui.PageNumberSheet
@@ -489,7 +494,15 @@ class MainActivity : ComponentActivity() {
         if (!active) processQueue.clear()
     }
 
-    private suspend fun runOcrCapture(capture: Capture, jumpToPage: Boolean) {
+    /**
+     * Run OCR for a single capture. When [assignedProvider] is set (parallel mode),
+     * a single-provider config is used so the capture is processed by that specific provider.
+     */
+    private suspend fun runOcrCapture(
+        capture: Capture,
+        jumpToPage: Boolean,
+        assignedProvider: LlmProvider? = null,
+    ) {
         val key = appSettings.geminiApiKey.orEmpty()
         val book = activeBook ?: return
         if (!appSettings.hasAnyProvider) {
@@ -498,14 +511,26 @@ class MainActivity : ComponentActivity() {
             return
         }
         ocrStatus[capture.id] = OcrJobState.Running
-        upsertProcessItem(processQueue, capture.id, ProcessStep.Ocr)
+        upsertProcessItem(
+            processQueue, capture.id, ProcessStep.Ocr,
+            providerName = assignedProvider?.name,
+        )
+        val effectiveConfig = if (assignedProvider != null) {
+            ProviderConfig(
+                providers = listOf(assignedProvider),
+                activeIndex = 0,
+                fallbackOnError = false,
+            )
+        } else {
+            appSettings.providerConfig
+        }
         try {
             when (val outcome = bookRepository.processCapture(
                 book,
                 capture,
                 key,
                 precomputedOcrText = capture.ocrText,
-                providerConfig = appSettings.providerConfig,
+                providerConfig = effectiveConfig,
                 onApiCall = { providerId -> recordApiCall(providerId) },
             )) {
                 is ProcessOutcome.Done -> {
@@ -522,9 +547,7 @@ class MainActivity : ComponentActivity() {
 
                 is ProcessOutcome.NeedsPageNumber -> {
                     ocrStatus.remove(capture.id)
-                    // OCR itself succeeded; the page number is filled later from the page list.
                     upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
-                    // Keep the recognized text so 稍后处理 doesn't lose or re-bill it.
                     activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
                 }
             }
@@ -532,7 +555,6 @@ class MainActivity : ComponentActivity() {
             ocrStatus[capture.id] = OcrJobState.Failed
             ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
             upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
-            // Enqueue for background retry
             OcrRetryWorker.enqueueCaptureOcr(this@MainActivity, book.uid, capture.id)
         }
     }
@@ -571,17 +593,45 @@ class MainActivity : ComponentActivity() {
             return
         }
         startNewBatchIfIdle()
+        val config = appSettings.providerConfig
+        val usable = config.usableProviders
+        val parallel = config.parallelOcr && usable.size > 1
+
         lifecycleScope.launch {
             val pendingCaptures = activeBook?.captures?.filter { it.ocrText == null }.orEmpty()
             pendingCaptures.forEach { capture ->
                 upsertProcessItem(processQueue, capture.id, ProcessStep.Queued)
             }
-            for (capture in pendingCaptures) {
-                if (isMonthlyApiBudgetExceeded()) {
-                    showMonthlyApiBudgetError()
-                    break
+
+            if (parallel) {
+                // Parallel mode: N workers, one per usable provider, pulling from a shared channel
+                val channel = kotlinx.coroutines.channels.Channel<Capture>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                for (capture in pendingCaptures) channel.send(capture)
+                channel.close()
+
+                coroutineScope {
+                    val workers = usable.map { provider ->
+                        async {
+                            for (capture in channel) {
+                                if (isMonthlyApiBudgetExceeded()) {
+                                    showMonthlyApiBudgetError()
+                                    break
+                                }
+                                runOcrCapture(capture, jumpToPage = false, assignedProvider = provider)
+                            }
+                        }
+                    }
+                    workers.awaitAll()
                 }
-                runOcrCapture(capture, jumpToPage = false)
+            } else {
+                // Sequential mode (original behavior)
+                for (capture in pendingCaptures) {
+                    if (isMonthlyApiBudgetExceeded()) {
+                        showMonthlyApiBudgetError()
+                        break
+                    }
+                    runOcrCapture(capture, jumpToPage = false)
+                }
             }
         }
     }
@@ -651,11 +701,13 @@ class MainActivity : ComponentActivity() {
         id: String,
         step: ProcessStep,
         message: String? = null,
+        providerName: String? = null,
     ) {
         val item = ProcessItem(
             id = id,
             step = step,
             message = message,
+            providerName = providerName,
         )
         val index = list.indexOfFirst { it.id == id }
         if (index >= 0) list[index] = item else list.add(item)
