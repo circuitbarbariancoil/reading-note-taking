@@ -65,7 +65,12 @@ data class ProviderConfig(
     val activeIndex: Int = 0,
     val fallbackOnError: Boolean = true,
     val roundRobin: Boolean = false,
+    val parallelOcr: Boolean = false,
 ) {
+    /** All enabled providers with a non-blank API key. */
+    val usableProviders: List<LlmProvider>
+        get() = providers.filter { it.enabled && it.apiKey.isNotBlank() }
+
     val activeProvider: LlmProvider?
         get() = providers.getOrNull(activeIndex)?.takeIf { it.enabled }
 

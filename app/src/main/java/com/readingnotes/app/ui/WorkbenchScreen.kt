@@ -59,6 +59,8 @@ import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
+import com.readingnotes.app.ui.PageNumberSheet
+import com.readingnotes.app.ui.PageSheetAction
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -80,12 +82,13 @@ fun WorkbenchScreen(
     onDismissOcrError: () -> Unit = {},
     onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
     onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
+    onDeletePage: (com.readingnotes.app.model.Page) -> Unit = {},
     processItems: List<ProcessItem> = emptyList(),
     onRetryProcessItem: (ProcessItem) -> Unit = {},
-    onFillProcessItem: (ProcessItem) -> Unit = {},
     onDismissProcessItem: (ProcessItem) -> Unit = {},
-    batchProcessItems: List<ProcessItem> = emptyList(),
-    onClearBatchProcessItems: () -> Unit = {},
+    queueCollapsed: Boolean = false,
+    onExpandQueue: () -> Unit = {},
+    onCollapseQueue: () -> Unit = {},
     focusRange: IntRange? = null,
 ) {
     var book by remember(initialBook) { mutableStateOf(initialBook) }
@@ -98,6 +101,7 @@ fun WorkbenchScreen(
     var editingEntryId by remember { mutableStateOf<String?>(null) }
     var pageMenuOpen by remember { mutableStateOf(false) }
     var confirmReOcr by remember { mutableStateOf(false) }
+    var fullScreenImage by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val colors = remember(settings.palette) { settings.palette.asMap() }
@@ -181,7 +185,10 @@ fun WorkbenchScreen(
                         modifier = Modifier.fillMaxSize(),
                         flash = focusRange.takeIf { pageIndex == initialPageIndex },
                     )
-                    else -> PageImage(repository.archiveImagePath(book, page))
+                    else -> PageImage(
+                        repository.archiveImagePath(book, page),
+                        onClick = { fullScreenImage = true },
+                    )
                 }
 
                 if (ocrBusy) {
@@ -224,26 +231,24 @@ fun WorkbenchScreen(
             }
         }
 
-        if (processItems.isNotEmpty() || batchProcessItems.isNotEmpty()) {
+        val hasActiveItems = processItems.any { it.step == ProcessStep.Queued || it.step == ProcessStep.Saving || it.step == ProcessStep.Ocr }
+        if (processItems.isNotEmpty() && hasActiveItems) {
             Column(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (batchProcessItems.isNotEmpty()) {
-                    BatchProcessingQueueCard(
-                        items = batchProcessItems,
-                        onRetry = onRetryProcessItem,
-                        onFillPage = onFillProcessItem,
-                        onDismiss = onDismissProcessItem,
-                        onClearCompleted = onClearBatchProcessItems,
+                if (queueCollapsed) {
+                    ProcessingQueueChip(
+                        items = processItems,
+                        onExpand = onExpandQueue,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
                     )
-                }
-                if (processItems.isNotEmpty()) {
+                } else {
                     ProcessingQueueCard(
                         items = processItems,
                         onRetry = onRetryProcessItem,
-                        onFillPage = onFillProcessItem,
                         onDismiss = onDismissProcessItem,
+                        onClose = onCollapseQueue,
                     )
                 }
             }
@@ -298,6 +303,10 @@ fun WorkbenchScreen(
                     onOcrPage(page)
                 }
             },
+            onDelete = {
+                pageMenuOpen = false
+                onDeletePage(page)
+            },
         )
     }
 
@@ -323,6 +332,13 @@ fun WorkbenchScreen(
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { confirmReOcr = false }) { Text("取消", color = SumiSoft) }
             },
+        )
+    }
+
+    if (fullScreenImage) {
+        FullScreenImageViewer(
+            imagePath = repository.archiveImagePath(book, page),
+            onDismiss = { fullScreenImage = false },
         )
     }
 
@@ -515,7 +531,7 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
     }
 }
 
-/** Per-page actions: change the page number or re-run OCR. */
+/** Per-page actions: change the page number, re-run OCR, or delete. */
 @Composable
 private fun PageMenuDialog(
     page: com.readingnotes.app.model.Page,
@@ -523,40 +539,29 @@ private fun PageMenuDialog(
     onDismiss: () -> Unit,
     onChangePageNumber: (Int) -> Unit,
     onReOcr: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    var pageNumText by remember { mutableStateOf(page.page.toString()) }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("页面 p.${page.page}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                androidx.compose.material3.OutlinedTextField(
-                    value = pageNumText,
-                    onValueChange = { pageNumText = it.filter { c -> c.isDigit() } },
-                    label = { Text("页码") },
-                    singleLine = true,
-                )
-                Text(
-                    if (page.ocrText == null) "此页尚未 OCR。" else "重新 OCR 会覆盖已识别的文字。",
-                    fontSize = 12.sp,
-                    color = SumiSoft,
-                )
-            }
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onReOcr, enabled = !ocrBusy) {
-                    Text(if (page.ocrText == null) "OCR" else "重新 OCR")
-                }
-                TextButton(
-                    onClick = { pageNumText.toIntOrNull()?.let(onChangePageNumber) },
-                    enabled = pageNumText.toIntOrNull()?.let { it != page.page } == true,
-                ) { Text("保存页码") }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
+    PageNumberSheet(
+        title = "页面 p.${page.page}",
+        initialValue = page.page.toString(),
+        confirmLabel = "保存页码",
+        dismissLabel = "取消",
+        noteText = if (page.ocrText == null) "此页尚未 OCR。" else "重新 OCR 会覆盖已识别的文字。",
+        confirmEnabled = { it != page.page },
+        secondaryActions = listOf(
+            PageSheetAction(
+                label = if (page.ocrText == null) "OCR" else "重新 OCR",
+                enabled = !ocrBusy,
+                onClick = onReOcr,
+            ),
+            PageSheetAction(
+                label = "删除此页",
+                danger = true,
+                onClick = onDelete,
+            ),
+        ),
+        onConfirm = onChangePageNumber,
+        onDismiss = onDismiss,
     )
 }
 
@@ -606,8 +611,13 @@ private fun NotOcrYet(imagePath: String?, onOcr: () -> Unit, ocrBusy: Boolean) {
 }
 
 @Composable
-private fun PageImage(path: String?) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+private fun PageImage(path: String?, onClick: (() -> Unit)? = null) {
+    val modifier = if (onClick != null) {
+        Modifier.fillMaxSize().clickable(onClick = onClick)
+    } else {
+        Modifier.fillMaxSize()
+    }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
         val bitmap = remember(path) { path?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() } }
         if (bitmap != null) {
             Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)

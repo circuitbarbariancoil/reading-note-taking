@@ -11,12 +11,19 @@ import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.GeminiOcrClient
 import com.readingnotes.app.ocr.OcrDispatcher
 import com.readingnotes.app.ocr.ProviderConfig
+import com.readingnotes.app.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+class DuplicatePageNumberException(pageNumber: Int) : IllegalStateException("第 $pageNumber 页已存在，请换一个页码")
 
 /** Result of processing a capture into a page. */
 sealed class ProcessOutcome {
@@ -161,20 +168,21 @@ class BookRepository(
         sourceBytes: ByteArray,
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val base = loadBook(book.uid) ?: book
             val now = utcNow()
             val captureId = UUID.randomUUID().toString()
             val relativePath = "captures/${captureId}.webp"
             val archiveWebp = ImageProcessing.toArchiveWebp(ImageProcessing.decode(sourceBytes))
-            saveArchiveImage(book.uid, relativePath, archiveWebp)
+            saveArchiveImage(base.uid, relativePath, archiveWebp)
 
             val capture = com.readingnotes.app.model.Capture(
                 id = captureId,
-                imagePath = archiveFile(book.uid, relativePath).absolutePath,
+                imagePath = archiveFile(base.uid, relativePath).absolutePath,
                 capturedAt = now,
             )
-            val updated = book.copy(
+            val updated = base.copy(
                 updatedAt = now,
-                captures = book.captures + capture,
+                captures = base.captures + capture,
             )
             saveBook(updated)
             cachedBook = updated
@@ -207,6 +215,9 @@ class BookRepository(
             val now = utcNow()
             val pageNumber = manualPageNumber ?: extractPageNumber(ocrText)
                 ?: return@withLock ProcessOutcome.NeedsPageNumber(ocrText)
+            if (manualPageNumber != null && base.pages.any { it.page == pageNumber }) {
+                throw DuplicatePageNumberException(pageNumber)
+            }
 
             val page = buildPageFromCapture(base, capture, pageNumber, now, ocrText)
             val updated = base.copy(
@@ -232,6 +243,9 @@ class BookRepository(
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
+            if (base.pages.any { it.page == pageNumber }) {
+                throw DuplicatePageNumberException(pageNumber)
+            }
             val now = utcNow()
             val page = buildPageFromCapture(base, capture, pageNumber, now, ocrText = null)
             val updated = base.copy(
@@ -309,6 +323,17 @@ class BookRepository(
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
+            val currentPage = base.pages.firstOrNull { it.page == page.page && it.addedAt == page.addedAt }
+                ?: page
+            if (currentPage.page == newNumber) {
+                return@withLock base
+            }
+            val duplicate = base.pages.firstOrNull {
+                it.page == newNumber && !(it.page == currentPage.page && it.addedAt == currentPage.addedAt)
+            }
+            if (duplicate != null) {
+                throw DuplicatePageNumberException(newNumber)
+            }
             val now = utcNow()
             val newRelPath = "pages/p%04d_archive.webp".format(newNumber)
             val oldRel = page.archiveImage
@@ -324,14 +349,14 @@ class BookRepository(
             val updated = base.copy(
                 updatedAt = now,
                 pages = base.pages.map {
-                    if (it.page == page.page && it.addedAt == page.addedAt) {
+                    if (it.page == currentPage.page && it.addedAt == currentPage.addedAt) {
                         it.copy(page = newNumber, archiveImage = if (oldRel != null) newRelPath else null)
                     } else {
                         it
                     }
                 }.sortedBy { it.page },
                 entries = base.entries.map {
-                    if (it.page == page.page) it.copy(page = newNumber) else it
+                    if (it.page == currentPage.page) it.copy(page = newNumber) else it
                 },
             )
             saveBook(updated)
@@ -341,6 +366,30 @@ class BookRepository(
                 syncQueueStore.enqueueUpload("${updated.dropboxRoot}/$newRelPath", newLocalFile.absolutePath)
                 DropboxSyncWorker.trigger(context)
             }
+            cachedBook = updated
+            updated
+        }
+    }
+
+    /** Delete a processed page, its archive image, related entries & highlights. */
+    suspend fun deletePage(book: Book, page: Page): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            // Delete archive image from disk
+            page.archiveImage?.let { rel ->
+                runCatching { archiveFile(base.uid, rel).delete() }
+            }
+            // Enqueue Dropbox deletion of archive
+            page.archiveImage?.let { rel ->
+                syncQueueStore.enqueueDelete("${base.dropboxRoot}/$rel")
+                DropboxSyncWorker.trigger(context)
+            }
+            val updated = base.copy(
+                updatedAt = utcNow(),
+                pages = base.pages.filterNot { it.page == page.page && it.addedAt == page.addedAt },
+                entries = base.entries.filterNot { it.page == page.page },
+            )
+            saveBook(updated)
             cachedBook = updated
             updated
         }
@@ -361,6 +410,210 @@ class BookRepository(
             saveBook(updated)
             cachedBook = updated
             updated
+        }
+    }
+
+    /**
+     * Restore books from Dropbox: scans /ReadingVault/books/, downloads book.json
+     * and all archive images for each book not already present locally.
+     * Returns the number of books restored.
+     */
+    suspend fun restoreFromDropbox(credentialJson: String, onProgress: (String) -> Unit = {}): Int =
+        withContext(Dispatchers.IO) {
+            val client = DropboxClient.fromCredentialJson(credentialJson)
+            val bookFolders = try {
+                client.listFolders("/ReadingVault/books")
+            } catch (_: Exception) {
+                onProgress("无法访问 /ReadingVault/books")
+                return@withContext 0
+            }
+            var restoredCount = 0
+            for (uid in bookFolders) {
+                val localJson = bookJsonFile(uid)
+                if (localJson.exists()) continue // already local
+                onProgress("正在恢复: $uid")
+                try {
+                    val jsonBytes = client.downloadFile("/ReadingVault/books/$uid/book.json")
+                    val book = BookStore.decode(String(jsonBytes, Charsets.UTF_8))
+                    localJson.parentFile?.mkdirs()
+                    localJson.writeText(String(jsonBytes, Charsets.UTF_8))
+                    // Download archive images
+                    val files = try { client.listFilesRecursive("/ReadingVault/books/$uid") } catch (_: Exception) { emptyList() }
+                    for (filePath in files) {
+                        if (filePath.endsWith(".webp") || filePath.endsWith(".jpg") || filePath.endsWith(".png")) {
+                            val relative = filePath.removePrefix("/readingvault/books/$uid/")
+                            val localFile = File(bookDir(uid), relative)
+                            if (!localFile.exists()) {
+                                localFile.parentFile?.mkdirs()
+                                val bytes = client.downloadFile(filePath)
+                                localFile.writeBytes(bytes)
+                            }
+                        }
+                    }
+                    restoredCount++
+                    onProgress("已恢复: ${book.title}")
+                } catch (e: Exception) {
+                    onProgress("恢复失败 ($uid): ${e.message?.take(60)}")
+                }
+            }
+            restoredCount
+        }
+
+    /**
+     * Export a book as a ZIP file containing book.json + all archive images.
+     * Returns the path to the written ZIP file in the app's cache dir.
+     */
+    suspend fun exportBookZip(book: Book): File = withContext(Dispatchers.IO) {
+        val base = loadBook(book.uid) ?: book
+        val zipFile = File(context.cacheDir, "${base.title.take(20)}_${base.uid.take(8)}.zip")
+        java.util.zip.ZipOutputStream(zipFile.outputStream().buffered()).use { zip ->
+            // book.json
+            zip.putNextEntry(java.util.zip.ZipEntry("book.json"))
+            zip.write(BookStore.encode(base).toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            // archive images
+            for (page in base.pages) {
+                val rel = page.archiveImage ?: continue
+                val file = archiveFile(base.uid, rel)
+                if (file.exists()) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(rel))
+                    zip.write(file.readBytes())
+                    zip.closeEntry()
+                }
+            }
+            // unprocessed capture images
+            for (capture in base.captures) {
+                val file = File(capture.imagePath)
+                if (file.exists()) {
+                    zip.putNextEntry(java.util.zip.ZipEntry("captures/${file.name}"))
+                    zip.write(file.readBytes())
+                    zip.closeEntry()
+                }
+            }
+        }
+        zipFile
+    }
+
+    /**
+     * Export a full app backup as a ZIP containing settings.json + all books
+     * (book.json + archive images + unprocessed captures per book).
+     */
+    suspend fun exportFullBackup(settingsStore: SettingsStore): File = withContext(Dispatchers.IO) {
+        val timestamp = java.time.LocalDateTime.now().format(
+            java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+        )
+        val zipFile = File(context.cacheDir, "reading_notes_backup_$timestamp.zip")
+        ZipOutputStream(zipFile.outputStream().buffered()).use { zip ->
+            // settings.json
+            zip.putNextEntry(ZipEntry("settings.json"))
+            zip.write(settingsStore.exportSettingsJson().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+
+            // All books
+            val books = listBooks()
+            for (book in books) {
+                val prefix = "books/${book.uid}/"
+                // book.json
+                zip.putNextEntry(ZipEntry("${prefix}book.json"))
+                zip.write(BookStore.encode(book).toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+                // archive images
+                for (page in book.pages) {
+                    val rel = page.archiveImage ?: continue
+                    val file = archiveFile(book.uid, rel)
+                    if (file.exists()) {
+                        zip.putNextEntry(ZipEntry("$prefix$rel"))
+                        zip.write(file.readBytes())
+                        zip.closeEntry()
+                    }
+                }
+                // unprocessed capture images
+                for (capture in book.captures) {
+                    val file = File(capture.imagePath)
+                    if (file.exists()) {
+                        zip.putNextEntry(ZipEntry("${prefix}captures/${file.name}"))
+                        zip.write(file.readBytes())
+                        zip.closeEntry()
+                    }
+                }
+            }
+        }
+        zipFile
+    }
+
+    /**
+     * Import a full app backup from a ZIP input stream.
+     * Restores settings + all books (newer-wins by updatedAt for conflicts).
+     * Returns the number of books restored/updated.
+     */
+    suspend fun importFullBackup(
+        inputStream: InputStream,
+        settingsStore: SettingsStore,
+        onProgress: (String) -> Unit = {},
+    ): Int = withContext(Dispatchers.IO) {
+        val tempDir = File(context.cacheDir, "backup_import_${System.currentTimeMillis()}")
+        tempDir.mkdirs()
+        try {
+            // Extract ZIP to temp dir
+            ZipInputStream(inputStream.buffered()).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val outFile = File(tempDir, entry.name)
+                        outFile.parentFile?.mkdirs()
+                        outFile.outputStream().use { os -> zis.copyTo(os) }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+
+            // Restore settings
+            val settingsFile = File(tempDir, "settings.json")
+            if (settingsFile.exists()) {
+                onProgress("正在恢复设置…")
+                runCatching {
+                    settingsStore.importSettingsJson(settingsFile.readText(Charsets.UTF_8))
+                }.onFailure { onProgress("设置恢复失败: ${it.message?.take(40)}") }
+            }
+
+            // Restore books
+            val booksDir = File(tempDir, "books")
+            val bookDirs = booksDir.listFiles()?.filter { it.isDirectory }.orEmpty()
+            var restoredCount = 0
+            for (dir in bookDirs) {
+                val uid = dir.name
+                val jsonFile = File(dir, "book.json")
+                if (!jsonFile.exists()) continue
+                onProgress("正在恢复: $uid")
+                try {
+                    val importedBook = BookStore.decode(jsonFile.readText(Charsets.UTF_8))
+                    val localBook = loadBook(uid)
+                    // Skip if local is newer
+                    if (localBook != null && localBook.updatedAt >= importedBook.updatedAt) {
+                        onProgress("跳过 (本地更新): ${importedBook.title}")
+                        continue
+                    }
+                    // Copy book.json
+                    val destDir = bookDir(uid)
+                    destDir.mkdirs()
+                    jsonFile.copyTo(bookJsonFile(uid), overwrite = true)
+                    // Copy archive images and captures
+                    dir.walkTopDown().filter { it.isFile && it.name != "book.json" }.forEach { srcFile ->
+                        val relPath = srcFile.relativeTo(dir).path
+                        val destFile = File(destDir, relPath)
+                        destFile.parentFile?.mkdirs()
+                        srcFile.copyTo(destFile, overwrite = true)
+                    }
+                    restoredCount++
+                    onProgress("已恢复: ${importedBook.title}")
+                } catch (e: Exception) {
+                    onProgress("恢复失败 ($uid): ${e.message?.take(60)}")
+                }
+            }
+            restoredCount
+        } finally {
+            tempDir.deleteRecursively()
         }
     }
 
@@ -402,7 +655,23 @@ class BookRepository(
     suspend fun persist(book: Book, dropboxCredentialJson: String?): Book =
         withContext(Dispatchers.IO) {
             mutex.withLock {
-                val stamped = book.copy(updatedAt = utcNow())
+                // Merge caller's edits with latest disk state to prevent
+                // concurrent writes (e.g. parallel OCR adding pages) from
+                // being silently overwritten.
+                val disk = loadBook(book.uid)
+                val merged = if (disk != null) {
+                    val callerPageKeys = book.pages.map { Pair(it.page, it.addedAt) }.toSet()
+                    val missingPages = disk.pages.filter { Pair(it.page, it.addedAt) !in callerPageKeys }
+                    val callerCaptureIds = book.captures.map { it.id }.toSet()
+                    val missingCaptures = disk.captures.filter { it.id !in callerCaptureIds }
+                    book.copy(
+                        pages = (book.pages + missingPages).sortedBy { it.page },
+                        captures = book.captures + missingCaptures,
+                    )
+                } else {
+                    book
+                }
+                val stamped = merged.copy(updatedAt = utcNow())
                 saveBook(stamped)
                 cachedBook = stamped
                 if (!dropboxCredentialJson.isNullOrBlank()) {

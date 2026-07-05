@@ -15,6 +15,20 @@ import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneOffset
 
+/** Portable settings snapshot for backup/restore (plain JSON, not encrypted). */
+@Serializable
+data class ExportedSettings(
+    val geminiApiKey: String? = null,
+    val dropboxCredentialJson: String? = null,
+    val bookTitle: String = AppSettings.DEFAULT_BOOK_TITLE,
+    val palette: HighlightPalette = HighlightPalette.DEFAULT,
+    val apiUsage: ApiUsageStats = ApiUsageStats(),
+    val providerApiUsage: Map<String, ProviderUsageStats> = emptyMap(),
+    val maxOcrRetries: Int = 3,
+    val monthlyApiBudget: Int = 0,
+    val providerConfig: ProviderConfig = ProviderConfig(),
+)
+
 @Serializable
 data class ApiUsageStats(
     val totalCalls: Int = 0,
@@ -195,6 +209,37 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putString(KEY_PROVIDER_API_USAGE, json.encodeToString(MapSerializer(String.serializer(), ProviderUsageStats.serializer()), stats))
             .apply()
+    }
+
+    /** Export all settings as a plain-text JSON string for backup. */
+    fun exportSettingsJson(): String {
+        val settings = read()
+        val exported = ExportedSettings(
+            geminiApiKey = settings.geminiApiKey,
+            dropboxCredentialJson = settings.dropboxCredentialJson,
+            bookTitle = settings.bookTitle,
+            palette = settings.palette,
+            apiUsage = settings.apiUsage,
+            providerApiUsage = settings.providerApiUsage,
+            maxOcrRetries = settings.maxOcrRetries,
+            monthlyApiBudget = settings.monthlyApiBudget,
+            providerConfig = settings.providerConfig,
+        )
+        return json.encodeToString(ExportedSettings.serializer(), exported)
+    }
+
+    /** Import settings from a previously exported JSON string. */
+    fun importSettingsJson(jsonStr: String) {
+        val imported = json.decodeFromString(ExportedSettings.serializer(), jsonStr)
+        imported.geminiApiKey?.let { saveGeminiApiKey(it) }
+        imported.dropboxCredentialJson?.let { saveDropboxCredentialJson(it) }
+        saveBookTitle(imported.bookTitle)
+        savePalette(imported.palette)
+        saveApiUsage(imported.apiUsage)
+        saveProviderApiUsage(imported.providerApiUsage)
+        saveMaxOcrRetries(imported.maxOcrRetries)
+        saveMonthlyApiBudget(imported.monthlyApiBudget)
+        saveProviderConfig(imported.providerConfig)
     }
 
     companion object {

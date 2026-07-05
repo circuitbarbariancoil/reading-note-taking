@@ -1,9 +1,12 @@
 package com.readingnotes.app.ui
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +56,7 @@ import com.readingnotes.app.ui.theme.Paper
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BookShelfScreen(
     books: List<Book>,
@@ -59,10 +64,18 @@ fun BookShelfScreen(
     onOpenBook: (Book) -> Unit,
     onSettings: () -> Unit,
     onNewBook: (Book) -> Unit,
+    onDeleteBooks: (List<String>) -> Unit = {},
     onEntries: () -> Unit = {},
 ) {
     var gridMode by remember { mutableStateOf(true) }
     var showNewDialog by remember { mutableStateOf(false) }
+    val selectedUids = remember { mutableStateListOf<String>() }
+    val selectMode = selectedUids.isNotEmpty()
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    fun toggleSelect(uid: String) {
+        if (uid in selectedUids) selectedUids.remove(uid) else selectedUids.add(uid)
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Paper)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -71,41 +84,70 @@ fun BookShelfScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "我的书",
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 22.sp,
-                    color = Sumi,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "条目",
-                    fontSize = 13.sp,
-                    color = Accent,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable(onClick = onEntries)
-                        .padding(8.dp),
-                )
-                Text(
-                    if (gridMode) "☷" else "☰",
-                    fontSize = 20.sp,
-                    color = SumiSoft,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { gridMode = !gridMode }
-                        .padding(8.dp),
-                )
-                Text(
-                    "⚙",
-                    fontSize = 18.sp,
-                    color = SumiSoft,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable(onClick = onSettings)
-                        .padding(8.dp),
-                )
+                if (selectMode) {
+                    Text(
+                        "已选 ${selectedUids.size} 本",
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 18.sp,
+                        color = Sumi,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "取消",
+                        fontSize = 13.sp,
+                        color = SumiSoft,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { selectedUids.clear() }
+                            .padding(8.dp),
+                    )
+                    Text(
+                        "删除",
+                        fontSize = 13.sp,
+                        color = Color(0xFFB3524A),
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { confirmDelete = true }
+                            .padding(8.dp),
+                    )
+                } else {
+                    Text(
+                        "我的书",
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 22.sp,
+                        color = Sumi,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "条目",
+                        fontSize = 13.sp,
+                        color = Accent,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable(onClick = onEntries)
+                            .padding(8.dp),
+                    )
+                    Text(
+                        if (gridMode) "☷" else "☰",
+                        fontSize = 20.sp,
+                        color = SumiSoft,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { gridMode = !gridMode }
+                            .padding(8.dp),
+                    )
+                    Text(
+                        "⚙",
+                        fontSize = 18.sp,
+                        color = SumiSoft,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable(onClick = onSettings)
+                            .padding(8.dp),
+                    )
+                }
             }
 
             if (books.isEmpty()) {
@@ -124,7 +166,15 @@ fun BookShelfScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(books, key = { it.uid }) { book ->
-                        BookCardGrid(book, repository, onClick = { onOpenBook(book) })
+                        val selected = book.uid in selectedUids
+                        BookCardGrid(
+                            book, repository,
+                            selected = selected,
+                            onClick = {
+                                if (selectMode) toggleSelect(book.uid) else onOpenBook(book)
+                            },
+                            onLongClick = { toggleSelect(book.uid) },
+                        )
                     }
                 }
             } else {
@@ -134,20 +184,30 @@ fun BookShelfScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(books, key = { it.uid }) { book ->
-                        BookCardList(book, repository, onClick = { onOpenBook(book) })
+                        val selected = book.uid in selectedUids
+                        BookCardList(
+                            book, repository,
+                            selected = selected,
+                            onClick = {
+                                if (selectMode) toggleSelect(book.uid) else onOpenBook(book)
+                            },
+                            onLongClick = { toggleSelect(book.uid) },
+                        )
                     }
                 }
             }
         }
 
-        // FAB
-        FloatingActionButton(
-            onClick = { showNewDialog = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
-            containerColor = Accent,
-            contentColor = Color.White,
-        ) {
-            Text("＋", fontSize = 22.sp)
+        // FAB (hide in select mode)
+        if (!selectMode) {
+            FloatingActionButton(
+                onClick = { showNewDialog = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                containerColor = Accent,
+                contentColor = Color.White,
+            ) {
+                Text("＋", fontSize = 22.sp)
+            }
         }
     }
 
@@ -161,19 +221,48 @@ fun BookShelfScreen(
             },
         )
     }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除 ${selectedUids.size} 本书？") },
+            text = { Text("书中所有页面、照片和条目将被永久删除，Dropbox 上的备份也会被清除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    val toDelete = selectedUids.toList()
+                    selectedUids.clear()
+                    onDeleteBooks(toDelete)
+                }) {
+                    Text("删除", color = Color(0xFFB3524A))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BookCardGrid(book: Book, repository: BookRepository, onClick: () -> Unit) {
+private fun BookCardGrid(
+    book: Book,
+    repository: BookRepository,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val borderMod = if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(12.dp)) else Modifier
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color.White)
-            .clickable(onClick = onClick)
+            .then(borderMod)
+            .background(if (selected) Color(0xFFEDE6D6) else Color.White)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(10.dp),
     ) {
-        // Cover thumbnail
         val coverPath = remember(book) {
             book.coverPath
                 ?: book.pages.firstOrNull()?.let { repository.archiveImagePath(book, it) }
@@ -195,6 +284,19 @@ private fun BookCardGrid(book: Book, repository: BookRepository, onClick: () -> 
                 } ?: Text(book.title.take(1), fontSize = 28.sp, color = Sumi, fontFamily = FontFamily.Serif)
             } else {
                 Text(book.title.take(1), fontSize = 28.sp, color = Sumi, fontFamily = FontFamily.Serif)
+            }
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✓", color = Color.White, fontSize = 13.sp)
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -218,14 +320,23 @@ private fun BookCardGrid(book: Book, repository: BookRepository, onClick: () -> 
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BookCardList(book: Book, repository: BookRepository, onClick: () -> Unit) {
+private fun BookCardList(
+    book: Book,
+    repository: BookRepository,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val borderMod = if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(12.dp)) else Modifier
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color.White)
-            .clickable(onClick = onClick)
+            .then(borderMod)
+            .background(if (selected) Color(0xFFEDE6D6) else Color.White)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -267,7 +378,19 @@ private fun BookCardList(book: Book, repository: BookRepository, onClick: () -> 
             }
             Text("${book.pages.size}页 · ${book.entries.size}条", fontSize = 11.sp, color = SumiSoft)
         }
-        Text("›", fontSize = 20.sp, color = Hairline)
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(Accent),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("✓", color = Color.White, fontSize = 13.sp)
+            }
+        } else {
+            Text("›", fontSize = 20.sp, color = Hairline)
+        }
     }
 }
 
