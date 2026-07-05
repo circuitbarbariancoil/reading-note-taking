@@ -18,6 +18,8 @@ import com.readingnotes.app.model.Page
 /** Selection reported from the WebView, in code-point offsets over frozen text. */
 data class Selection(val start: Int, val end: Int)
 
+private data class WebViewState(val contentKey: String, val html: String)
+
 /**
  * WebView that hosts the OCR page and reports text selection back to Compose as
  * code-point offsets. The native copy/paste action bar is suppressed so only the
@@ -106,13 +108,21 @@ fun PageWebView(
             }
         },
         update = { web ->
-            // Only reload when the page content actually changes; reloading on
-            // every recomposition (e.g. a selection update) would wipe the
-            // active selection and make the action bar flicker away.
-            if (web.tag != html) {
-                web.tag = html
+            // Structural key: everything that requires a full HTML reload.
+            // Highlights are NOT included — they update via JS to preserve scroll.
+            val contentKey = "${page.page}|${page.ocrText?.hashCode()}|$vertical|$interactive|$flash"
+            val prev = web.tag as? WebViewState
+
+            if (prev == null || prev.contentKey != contentKey) {
+                // Structural change (page switch, OCR, orientation): full reload.
+                web.tag = WebViewState(contentKey, html)
                 web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            } else if (prev.html != html) {
+                // Only highlights changed: patch DOM classes via JS, no scroll reset.
+                web.tag = WebViewState(contentKey, html)
+                web.evaluateJavascript(PageHtml.highlightUpdateJs(page.highlights, colors), null)
             }
+            // else: nothing changed (e.g. selection update) — skip.
         },
     )
 }

@@ -56,7 +56,7 @@ object PageHtml {
               .flash{animation:flashfade 1.8s ease-out forwards;}
               @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
               $swatches
-            </style></head><body>$body$startJs$selectJs</body></html>
+            </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs</body></html>
         """.trimIndent()
     }
 
@@ -191,6 +191,31 @@ object PageHtml {
             else if(window.Android) Android.onSelectionCleared();
           }
           document.addEventListener('selectionchange', function(){ setTimeout(reportSelection, 30); });
+        </script>
+    """.trimIndent()
+
+    /**
+     * JS that applies the given highlights to already-loaded DOM spans,
+     * avoiding a full WebView reload (which would reset scroll position).
+     */
+    fun highlightUpdateJs(highlights: List<PageHighlight>, colors: Map<String, String>): String {
+        val filtered = highlights.filter { colors.containsKey(it.color) }
+        val jsArray = filtered.joinToString(",", "[", "]") { "[${it.start},${it.end},'${it.color}']" }
+        return "if(typeof RN_applyHL==='function')RN_applyHL($jsArray);"
+    }
+
+    private val HIGHLIGHT_UPDATE_FN = """
+        <script>
+        function RN_applyHL(hl){
+          var spans=document.querySelectorAll('[data-s]');
+          for(var i=0;i<spans.length;i++){
+            var el=spans[i],s=+el.getAttribute('data-s'),cls='';
+            for(var j=hl.length-1;j>=0;j--){
+              if(s>=hl[j][0]&&s<hl[j][1]){cls='hl-'+hl[j][2];break;}
+            }
+            if(el.className!==cls)el.className=cls;
+          }
+        }
         </script>
     """.trimIndent()
 
