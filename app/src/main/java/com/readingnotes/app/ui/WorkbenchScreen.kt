@@ -101,6 +101,7 @@ fun WorkbenchScreen(
     var editingEntryId by remember { mutableStateOf<String?>(null) }
     var pageMenuOpen by remember { mutableStateOf(false) }
     var confirmReOcr by remember { mutableStateOf(false) }
+    var fullScreenImage by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val colors = remember(settings.palette) { settings.palette.asMap() }
@@ -184,7 +185,10 @@ fun WorkbenchScreen(
                         modifier = Modifier.fillMaxSize(),
                         flash = focusRange.takeIf { pageIndex == initialPageIndex },
                     )
-                    else -> PageImage(repository.archiveImagePath(book, page))
+                    else -> PageImage(
+                        repository.archiveImagePath(book, page),
+                        onClick = { fullScreenImage = true },
+                    )
                 }
 
                 if (ocrBusy) {
@@ -328,6 +332,13 @@ fun WorkbenchScreen(
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { confirmReOcr = false }) { Text("取消", color = SumiSoft) }
             },
+        )
+    }
+
+    if (fullScreenImage) {
+        FullScreenImageViewer(
+            imagePath = repository.archiveImagePath(book, page),
+            onDismiss = { fullScreenImage = false },
         )
     }
 
@@ -600,8 +611,13 @@ private fun NotOcrYet(imagePath: String?, onOcr: () -> Unit, ocrBusy: Boolean) {
 }
 
 @Composable
-private fun PageImage(path: String?) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+private fun PageImage(path: String?, onClick: (() -> Unit)? = null) {
+    val modifier = if (onClick != null) {
+        Modifier.fillMaxSize().clickable(onClick = onClick)
+    } else {
+        Modifier.fillMaxSize()
+    }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
         val bitmap = remember(path) { path?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() } }
         if (bitmap != null) {
             Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)

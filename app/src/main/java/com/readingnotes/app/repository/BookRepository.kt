@@ -168,20 +168,21 @@ class BookRepository(
         sourceBytes: ByteArray,
     ): Book = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val base = loadBook(book.uid) ?: book
             val now = utcNow()
             val captureId = UUID.randomUUID().toString()
             val relativePath = "captures/${captureId}.webp"
             val archiveWebp = ImageProcessing.toArchiveWebp(ImageProcessing.decode(sourceBytes))
-            saveArchiveImage(book.uid, relativePath, archiveWebp)
+            saveArchiveImage(base.uid, relativePath, archiveWebp)
 
             val capture = com.readingnotes.app.model.Capture(
                 id = captureId,
-                imagePath = archiveFile(book.uid, relativePath).absolutePath,
+                imagePath = archiveFile(base.uid, relativePath).absolutePath,
                 capturedAt = now,
             )
-            val updated = book.copy(
+            val updated = base.copy(
                 updatedAt = now,
-                captures = book.captures + capture,
+                captures = base.captures + capture,
             )
             saveBook(updated)
             cachedBook = updated
@@ -654,7 +655,23 @@ class BookRepository(
     suspend fun persist(book: Book, dropboxCredentialJson: String?): Book =
         withContext(Dispatchers.IO) {
             mutex.withLock {
-                val stamped = book.copy(updatedAt = utcNow())
+                // Merge caller's edits with latest disk state to prevent
+                // concurrent writes (e.g. parallel OCR adding pages) from
+                // being silently overwritten.
+                val disk = loadBook(book.uid)
+                val merged = if (disk != null) {
+                    val callerPageKeys = book.pages.map { Pair(it.page, it.addedAt) }.toSet()
+                    val missingPages = disk.pages.filter { Pair(it.page, it.addedAt) !in callerPageKeys }
+                    val callerCaptureIds = book.captures.map { it.id }.toSet()
+                    val missingCaptures = disk.captures.filter { it.id !in callerCaptureIds }
+                    book.copy(
+                        pages = (book.pages + missingPages).sortedBy { it.page },
+                        captures = book.captures + missingCaptures,
+                    )
+                } else {
+                    book
+                }
+                val stamped = merged.copy(updatedAt = utcNow())
                 saveBook(stamped)
                 cachedBook = stamped
                 if (!dropboxCredentialJson.isNullOrBlank()) {

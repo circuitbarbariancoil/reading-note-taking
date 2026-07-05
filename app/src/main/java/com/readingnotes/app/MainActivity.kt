@@ -623,6 +623,12 @@ class MainActivity : ComponentActivity() {
                     }
                     workers.awaitAll()
                 }
+                // After parallel workers complete, refresh activeBook from disk
+                // to ensure we have the latest state (each worker may have set
+                // activeBook to its own snapshot, potentially losing other workers' changes).
+                activeBook?.uid?.let { uid ->
+                    activeBook = bookRepository.loadBook(uid) ?: activeBook
+                }
             } else {
                 // Sequential mode (original behavior)
                 for (capture in pendingCaptures) {
