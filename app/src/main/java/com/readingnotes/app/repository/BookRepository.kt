@@ -797,7 +797,11 @@ class BookRepository(
 
     private fun utcNow(): String = java.time.Instant.now().toString()
 
+    // ── Notebook (special fixed-uid book) ────────────────────────────────
+
     companion object {
+        const val NOTEBOOK_UID = "notebook-default"
+
         // Loosened pattern: find any digits inside a [非本文...] block.
         private val PAGE_NUM_PATTERN = Regex("\\[\u975e\u672c\u6587[\uff1a:].*?(\\d+).*?\\]")
 
@@ -805,4 +809,47 @@ class BookRepository(
         fun extractPageNumber(ocrText: String): Int? =
             PAGE_NUM_PATTERN.find(ocrText)?.groupValues?.get(1)?.toIntOrNull()
     }
+
+    /** Get or create the singleton notebook book. */
+    fun getOrCreateNotebook(): Book {
+        val existing = loadBook(NOTEBOOK_UID)
+        if (existing != null) return existing
+        val now = utcNow()
+        val book = Book(
+            uid = NOTEBOOK_UID,
+            title = "笔记本",
+            createdAt = now,
+            updatedAt = now,
+            dropboxRoot = "/ReadingVault/books/$NOTEBOOK_UID",
+        )
+        saveBook(book)
+        return book
+    }
+
+    /** Add a note entry to the notebook. */
+    suspend fun addNoteToNotebook(text: String, annotation: String = "", tags: List<String> = emptyList()): Book =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val notebook = loadBook(NOTEBOOK_UID) ?: getOrCreateNotebook()
+                val now = utcNow()
+                val entry = com.readingnotes.app.model.Entry(
+                    id = UUID.randomUUID().toString().take(8),
+                    page = null,
+                    text = text,
+                    kind = com.readingnotes.app.model.EntryKind.note,
+                    createdAt = now,
+                    updatedAt = now,
+                    annotation = annotation,
+                    tags = tags,
+                )
+                val updated = notebook.copy(
+                    updatedAt = now,
+                    entries = notebook.entries + entry,
+                )
+                saveBook(updated)
+                updated
+            }
+        }
+
+    fun isNotebook(book: Book): Boolean = book.uid == NOTEBOOK_UID
 }

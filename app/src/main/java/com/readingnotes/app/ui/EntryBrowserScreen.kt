@@ -123,7 +123,7 @@ fun EntryBrowserScreen(
         if (filterBook != null) {
             val cmp = when (bookSortMode) {
                 EntrySortMode.Time -> compareBy<BrowsableEntry> { it.entry.createdAt }
-                EntrySortMode.Page -> compareBy { it.entry.page }
+                EntrySortMode.Page -> compareBy<BrowsableEntry> { it.entry.page ?: Int.MAX_VALUE }
             }
             list.sortedWith(if (bookAsc) cmp else cmp.reversed())
         } else {
@@ -467,7 +467,7 @@ private fun EntryCard(
                 )
                 Text(" · ", fontSize = 11.sp, color = SumiSoft)
             }
-            Text("p.${item.entry.page}", fontSize = 11.sp, color = SumiSoft)
+            Text(if (item.entry.page != null) "p.${item.entry.page}" else "笔记", fontSize = 11.sp, color = SumiSoft)
             Spacer(Modifier.weight(1f))
             Text(
                 item.entry.createdAt.take(10),

@@ -524,7 +524,7 @@ private fun EntryCard(entry: Entry, colorMap: Map<String, Color>, onClick: () ->
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("p.${entry.page}", fontSize = 11.sp, color = SumiSoft)
+            Text(if (entry.page != null) "p.${entry.page}" else "笔记", fontSize = 11.sp, color = SumiSoft)
             Spacer(Modifier.weight(1f))
             Text("删除", fontSize = 11.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDelete).padding(4.dp))
         }

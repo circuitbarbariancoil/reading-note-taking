@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">読書ノート</string>
+    <string name="share_save_label">存入笔记本</string>
+    <string name="share_edit_label">编辑并存入</string>
+</resources>

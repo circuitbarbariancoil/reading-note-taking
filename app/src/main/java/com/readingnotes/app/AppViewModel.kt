@@ -53,6 +53,7 @@ enum class ShellScreen {
     Palette,
     EntryBrowser,
     EntryEditor,
+    Notebook,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -85,6 +86,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var backupStatus by mutableStateOf<String?>(null)
     val ocrStatus = mutableStateMapOf<String, OcrJobState>()
     val processQueue = mutableStateListOf<ProcessItem>()
+    var notebookBook by mutableStateOf<Book?>(null)
+    var pendingShareText by mutableStateOf<String?>(null)
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -459,10 +462,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteBooks(uids: List<String>) {
-        for (uid in uids) {
+        val toDelete = uids.filter { it != com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID }
+        for (uid in toDelete) {
             bookRepository.deleteBook(uid)
         }
-        if (activeBook?.uid in uids) {
+        if (activeBook?.uid in toDelete) {
             activeBook = null
             currentScreen = ShellScreen.BookShelf
         }
@@ -602,6 +606,77 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 backupStatus = "恢复失败: ${e.message?.take(60)}"
             }
+        }
+    }
+
+    // ── Notebook ─────────────────────────────────────────────────────────
+
+    fun openNotebook() {
+        notebookBook = bookRepository.getOrCreateNotebook()
+        currentScreen = ShellScreen.Notebook
+    }
+
+    fun refreshNotebook() {
+        notebookBook = bookRepository.loadBook(com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID)
+            ?: bookRepository.getOrCreateNotebook()
+    }
+
+    fun addNoteToNotebook(text: String) {
+        viewModelScope.launch {
+            val updated = bookRepository.addNoteToNotebook(text)
+            notebookBook = updated
+            refreshBooks()
+            syncToDropbox(updated)
+        }
+    }
+
+    /** Handle shared text: save silently or open editor. */
+    fun handleShareText(text: String, openEditor: Boolean) {
+        if (openEditor) {
+            pendingShareText = text
+            openNotebook()
+        } else {
+            addNoteToNotebook(text)
+        }
+    }
+
+    fun saveNewNoteEntry(entry: Entry) {
+        val notebook = notebookBook ?: bookRepository.getOrCreateNotebook()
+        viewModelScope.launch {
+            val updated = notebook.copy(
+                updatedAt = java.time.Instant.now().toString(),
+                entries = notebook.entries + entry,
+            )
+            val persisted = bookRepository.persist(updated, appSettings.dropboxCredentialJson)
+            notebookBook = persisted
+            entryEditTarget = null
+            currentScreen = ShellScreen.Notebook
+            refreshBooks()
+        }
+    }
+
+    fun saveEditedNoteEntry(updated: Entry) {
+        val notebook = notebookBook ?: return
+        viewModelScope.launch {
+            val updatedBook = notebook.copy(
+                entries = notebook.entries.map { if (it.id == updated.id) updated else it },
+            )
+            notebookBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
+            entryEditTarget = null
+            currentScreen = ShellScreen.Notebook
+            refreshBooks()
+        }
+    }
+
+    fun deleteNoteEntry(entry: Entry) {
+        val notebook = notebookBook ?: return
+        viewModelScope.launch {
+            val updated = notebook.copy(
+                entries = notebook.entries.filterNot { it.id == entry.id },
+                updatedAt = java.time.Instant.now().toString(),
+            )
+            notebookBook = bookRepository.persist(updated, appSettings.dropboxCredentialJson)
+            refreshBooks()
         }
     }
 

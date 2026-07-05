@@ -2,6 +2,7 @@ package com.readingnotes.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -20,6 +21,7 @@ import com.readingnotes.app.dropbox.DropboxConfig
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
 import com.readingnotes.app.model.Entry
+import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.settings.SettingsStore
@@ -28,6 +30,7 @@ import com.readingnotes.app.ui.BrowsableEntry
 import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.EntryBrowserScreen
 import com.readingnotes.app.ui.EntryEditor
+import com.readingnotes.app.ui.NotebookScreen
 import com.readingnotes.app.ui.OcrJobState
 import com.readingnotes.app.ui.PageNumberSheet
 import com.readingnotes.app.ui.PageListScreen
@@ -37,8 +40,13 @@ import com.readingnotes.app.ui.SettingsScreen
 import com.readingnotes.app.ui.WorkbenchScreen
 import com.readingnotes.app.ui.theme.ReadingNotesTheme
 import java.io.File
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_OPEN_EDITOR = "open_editor"
+    }
+
     private val viewModel: AppViewModel by viewModels { AppViewModel.factory(application) }
 
     private val importBackupLauncher = registerForActivityResult(
@@ -54,6 +62,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIncomingIntent(intent)
         setContent {
             ReadingNotesTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -63,15 +72,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        if (intent.type != "text/plain") return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        // Determine whether to open editor based on which alias was used
+        val component = intent.component?.className ?: ""
+        val openEditor = component.endsWith("ShareEditActivity") ||
+            intent.getBooleanExtra(EXTRA_OPEN_EDITOR, false)
+        if (openEditor) {
+            viewModel.handleShareText(text, openEditor = true)
+        } else {
+            viewModel.handleShareText(text, openEditor = false)
+            Toast.makeText(this, "已添加到笔记本", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
     @Composable
     private fun AppShell() {
         BackHandler(enabled = viewModel.currentScreen != ShellScreen.BookShelf) {
             viewModel.currentScreen = when (viewModel.currentScreen) {
-                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser -> {
+                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser, ShellScreen.Notebook -> {
                     viewModel.onEnterBookShelf()
                     ShellScreen.BookShelf
                 }
-                ShellScreen.EntryEditor -> if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
+                ShellScreen.EntryEditor -> {
+                    if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser
+                    else if (viewModel.activeBook?.uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID) ShellScreen.Notebook
+                    else ShellScreen.Workbench
+                }
                 ShellScreen.Capture -> if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
@@ -99,6 +134,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.entryBrowserBookUid = null
                         viewModel.currentScreen = ShellScreen.EntryBrowser
                     },
+                    onOpenNotebook = { viewModel.openNotebook() },
                 )
             }
 
@@ -244,13 +280,66 @@ class MainActivity : ComponentActivity() {
                         val book = allBooks.find { it.uid == item.bookUid }
                         if (book != null) {
                             viewModel.activeBook = book
-                            viewModel.activePageIndex = book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0)
+                            viewModel.activePageIndex = if (item.entry.page != null) book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0) else 0
                             viewModel.entryEditorFromBrowser = true
                             viewModel.entryEditTarget = EntryEditTarget(book.uid, item.entry.id)
                             viewModel.currentScreen = ShellScreen.EntryEditor
                         }
                     },
                 )
+            }
+
+            ShellScreen.Notebook -> {
+                LaunchedEffect(Unit) { viewModel.refreshNotebook() }
+                val notebook = viewModel.notebookBook
+                val entries = notebook?.entries.orEmpty()
+
+                // If we have pending share text, create entry and open editor
+                val pendingText = viewModel.pendingShareText
+                if (pendingText != null) {
+                    viewModel.pendingShareText = null
+                    val newEntry = Entry(
+                        id = UUID.randomUUID().toString().take(8),
+                        page = null,
+                        text = pendingText,
+                        kind = EntryKind.note,
+                        createdAt = java.time.Instant.now().toString(),
+                        updatedAt = java.time.Instant.now().toString(),
+                    )
+                    viewModel.activeBook = notebook
+                    viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", newEntry.id)
+                    // Save the new entry first, then open editor
+                    viewModel.saveNewNoteEntry(newEntry)
+                } else {
+                    NotebookScreen(
+                        entries = entries,
+                        onBack = {
+                            viewModel.onEnterBookShelf()
+                            viewModel.currentScreen = ShellScreen.BookShelf
+                        },
+                        onNewEntry = {
+                            val now = java.time.Instant.now().toString()
+                            val newEntry = Entry(
+                                id = UUID.randomUUID().toString().take(8),
+                                page = null,
+                                text = "",
+                                kind = EntryKind.note,
+                                createdAt = now,
+                                updatedAt = now,
+                            )
+                            viewModel.activeBook = notebook
+                            viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", newEntry.id)
+                            viewModel.saveNewNoteEntry(newEntry)
+                        },
+                        onEntryClick = { entry ->
+                            viewModel.activeBook = notebook
+                            viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", entry.id)
+                            viewModel.entryEditorFromBrowser = false
+                            viewModel.currentScreen = ShellScreen.EntryEditor
+                        },
+                        onDeleteEntry = { entry -> viewModel.deleteNoteEntry(entry) },
+                    )
+                }
             }
 
             ShellScreen.EntryEditor -> {
@@ -263,17 +352,29 @@ class MainActivity : ComponentActivity() {
                     if (entry == null) {
                         viewModel.currentScreen = ShellScreen.BookShelf
                     } else {
-                        val pageIndex = book.pages.indexOfFirst { it.page == entry.page }.coerceAtLeast(0)
+                        val isNotebookEntry = book.uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                        val pageIndex = if (entry.page != null) book.pages.indexOfFirst { it.page == entry.page }.coerceAtLeast(0) else 0
                         EntryEditor(
                             entry = entry,
                             palette = viewModel.appSettings.palette,
                             knownTags = book.entries.flatMap { it.tags }.distinct().sorted(),
-                            onSave = { updated -> viewModel.saveEditedEntry(updated) },
-                            onDismiss = { viewModel.dismissEntryEditor() },
+                            onSave = { updated ->
+                                if (isNotebookEntry) viewModel.saveEditedNoteEntry(updated)
+                                else viewModel.saveEditedEntry(updated)
+                            },
+                            onDismiss = {
+                                viewModel.entryEditTarget = null
+                                viewModel.currentScreen = if (isNotebookEntry) ShellScreen.Notebook
+                                    else if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser
+                                    else ShellScreen.Workbench
+                                viewModel.entryEditorFromBrowser = false
+                            },
                             onViewOriginal = {
-                                viewModel.workbenchFocus = viewModel.locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
-                                viewModel.activePageIndex = pageIndex
-                                viewModel.currentScreen = ShellScreen.Workbench
+                                if (entry.page != null) {
+                                    viewModel.workbenchFocus = viewModel.locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
+                                    viewModel.activePageIndex = pageIndex
+                                    viewModel.currentScreen = ShellScreen.Workbench
+                                }
                             },
                         )
                     }

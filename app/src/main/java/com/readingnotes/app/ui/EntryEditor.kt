@@ -116,7 +116,7 @@ fun EntryEditor(
             Text("‹", fontSize = 26.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = ::requestBack).padding(end = 8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("条目", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi)
-                Text("p.${entry.page}", fontSize = 12.sp, color = SumiSoft)
+                Text(if (entry.page != null) "p.${entry.page}" else "笔记", fontSize = 12.sp, color = SumiSoft)
             }
             Text(
                 "查看原文",

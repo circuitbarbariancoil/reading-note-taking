@@ -56,6 +56,8 @@ import com.readingnotes.app.ui.theme.Paper
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
 
+private val NotebookBg = Color(0xFFF5F0E8)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BookShelfScreen(
@@ -66,6 +68,7 @@ fun BookShelfScreen(
     onNewBook: (Book) -> Unit,
     onDeleteBooks: (List<String>) -> Unit = {},
     onEntries: () -> Unit = {},
+    onOpenNotebook: () -> Unit = {},
 ) {
     var gridMode by remember { mutableStateOf(true) }
     var showNewDialog by remember { mutableStateOf(false) }
@@ -150,7 +153,16 @@ fun BookShelfScreen(
                 }
             }
 
-            if (books.isEmpty()) {
+            // Notebook card (always visible at top, not selectable)
+            if (!selectMode) {
+                NotebookCard(
+                    entryCount = books.find { it.uid == BookRepository.NOTEBOOK_UID }?.entries?.size ?: 0,
+                    onClick = onOpenNotebook,
+                )
+            }
+
+            val displayBooks = books.filter { it.uid != BookRepository.NOTEBOOK_UID }
+            if (displayBooks.isEmpty()) {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
@@ -165,7 +177,7 @@ fun BookShelfScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(books, key = { it.uid }) { book ->
+                    items(displayBooks, key = { it.uid }) { book ->
                         val selected = book.uid in selectedUids
                         BookCardGrid(
                             book, repository,
@@ -183,7 +195,7 @@ fun BookShelfScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(books, key = { it.uid }) { book ->
+                    items(displayBooks, key = { it.uid }) { book ->
                         val selected = book.uid in selectedUids
                         BookCardList(
                             book, repository,
@@ -391,6 +403,34 @@ private fun BookCardList(
         } else {
             Text("›", fontSize = 20.sp, color = Hairline)
         }
+    }
+}
+
+@Composable
+private fun NotebookCard(entryCount: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(NotebookBg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("📓", fontSize = 22.sp)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "笔记本",
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                color = Sumi,
+            )
+            Text("$entryCount 条笔记", fontSize = 11.sp, color = SumiSoft)
+        }
+        Text("›", fontSize = 20.sp, color = Hairline)
     }
 }
 

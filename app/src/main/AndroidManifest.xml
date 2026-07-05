@@ -37,11 +37,44 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Share target: silent save to notebook -->
+        <activity-alias
+            android:name=".ShareSaveActivity"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:label="@string/share_save_label">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.chooser.chooser_target_service"
+                android:value="androidx.sharetarget.ChooserTargetServiceCompat" />
+        </activity-alias>
+
+        <!-- Share target: edit then save to notebook -->
+        <activity-alias
+            android:name=".ShareEditActivity"
+            android:targetActivity=".MainActivity"
+            android:exported="true"
+            android:label="@string/share_edit_label">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.chooser.chooser_target_service"
+                android:value="androidx.sharetarget.ChooserTargetServiceCompat" />
+        </activity-alias>
     </application>
 </manifest>
