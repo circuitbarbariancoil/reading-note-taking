@@ -188,7 +188,6 @@ fun WorkbenchScreen(
                         page = page,
                         colors = colors,
                         vertical = vertical,
-                        showFurigana = settings.showFurigana,
                         interactive = true,
                         onSelectionChange = { sel -> selection = sel; if (sel != null) tappedHighlight = null },
                         modifier = Modifier.fillMaxSize(),

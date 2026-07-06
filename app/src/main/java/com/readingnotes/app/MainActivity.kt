@@ -203,7 +203,6 @@ class MainActivity : ComponentActivity() {
             ShellScreen.Settings -> SettingsScreen(
                 settings = viewModel.appSettings,
                 onSave = { maxRetries, monthlyBudget -> viewModel.saveSettings(maxRetries, monthlyBudget) },
-                onToggleFurigana = { show -> viewModel.saveShowFurigana(show) },
                 onConnectDropbox = { startDropboxConnect() },
                 onDisconnectDropbox = { viewModel.clearDropboxCredential() },
                 onProviderSettings = { viewModel.currentScreen = ShellScreen.ProviderSettings },

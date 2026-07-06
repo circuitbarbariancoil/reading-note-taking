@@ -3,6 +3,4 @@
     <string name="app_name">読書ノート</string>
     <string name="share_save_label">存入笔记本</string>
     <string name="share_edit_label">编辑并存入</string>
-    <string name="settings_furigana_title">显示振り仮名</string>
-    <string name="settings_furigana_desc">在 OCR 页面中显示读音</string>
 </resources>

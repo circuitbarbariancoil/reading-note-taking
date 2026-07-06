@@ -7,6 +7,7 @@ import com.readingnotes.app.dropbox.SyncQueueStore
 import com.readingnotes.app.image.ImageProcessing
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.BookStore
+import com.readingnotes.app.model.CodePoints
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.GeminiOcrClient
 import com.readingnotes.app.ocr.OcrDispatcher
@@ -67,7 +68,7 @@ class BookRepository(
             val now = utcNow()
 
             onApiCall(null)
-            val ocrText = GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg)
+            val ocrText = CodePoints.stripRuby(GeminiOcrClient(geminiApiKey).ocrPage(ocrJpeg))
             val extractedPageNum = extractPageNumber(ocrText)
             val pageNumber = extractedPageNum ?: nextPageNumber
             val page = Page(
@@ -206,10 +207,10 @@ class BookRepository(
         providerConfig: ProviderConfig? = null,
         onApiCall: (String?) -> Unit = { _ -> },
     ): ProcessOutcome = withContext(Dispatchers.IO) {
-        val ocrText = precomputedOcrText ?: run {
+        val ocrText = CodePoints.stripRuby(precomputedOcrText ?: run {
             val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(capture.imagePath).readBytes()))
             dispatchOcr(ocrJpeg, geminiApiKey, providerConfig, onApiCall)
-        }
+        })
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
             val now = utcNow()
@@ -271,7 +272,7 @@ class BookRepository(
         val imagePath = archiveImagePath(book, page)
             ?: throw IllegalStateException("此页没有原始图片，无法 OCR")
         val ocrJpeg = ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(imagePath).readBytes()))
-        val ocrText = dispatchOcr(ocrJpeg, geminiApiKey, providerConfig, onApiCall)
+        val ocrText = CodePoints.stripRuby(dispatchOcr(ocrJpeg, geminiApiKey, providerConfig, onApiCall))
         mutex.withLock {
             val base = loadBook(book.uid) ?: book
             val now = utcNow()
@@ -306,7 +307,7 @@ class BookRepository(
             val updated = base.copy(
                 updatedAt = utcNow(),
                 captures = base.captures.map {
-                    if (it.id == capture.id) it.copy(ocrText = ocrText) else it
+                    if (it.id == capture.id) it.copy(ocrText = CodePoints.stripRuby(ocrText)) else it
                 },
             )
             saveBook(updated)
@@ -788,10 +789,10 @@ class BookRepository(
     ): String {
         val config = providerConfig?.takeIf { it.providers.isNotEmpty() }
         return if (config != null) {
-            OcrDispatcher(config).ocrPage(ocrJpeg, onApiCall).text
+            CodePoints.stripRuby(OcrDispatcher(config).ocrPage(ocrJpeg, onApiCall).text)
         } else {
             onApiCall(null)
-            GeminiOcrClient(legacyApiKey).ocrPage(ocrJpeg)
+            CodePoints.stripRuby(GeminiOcrClient(legacyApiKey).ocrPage(ocrJpeg))
         }
     }
 

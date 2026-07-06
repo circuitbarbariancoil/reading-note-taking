@@ -22,7 +22,6 @@ data class ExportedSettings(
     val dropboxCredentialJson: String? = null,
     val bookTitle: String = AppSettings.DEFAULT_BOOK_TITLE,
     val palette: HighlightPalette = HighlightPalette.DEFAULT,
-    val showFurigana: Boolean = true,
     val apiUsage: ApiUsageStats = ApiUsageStats(),
     val providerApiUsage: Map<String, ProviderUsageStats> = emptyMap(),
     val maxOcrRetries: Int = 3,
@@ -51,7 +50,6 @@ data class AppSettings(
     val dropboxCredentialJson: String? = null,
     val bookTitle: String = DEFAULT_BOOK_TITLE,
     val palette: HighlightPalette = HighlightPalette.DEFAULT,
-    val showFurigana: Boolean = true,
     val apiUsage: ApiUsageStats = ApiUsageStats(),
     val providerApiUsage: Map<String, ProviderUsageStats> = emptyMap(),
     val maxOcrRetries: Int = 3,
@@ -98,7 +96,6 @@ class SettingsStore(context: Context) {
                 .orEmpty()
                 .ifBlank { AppSettings.DEFAULT_BOOK_TITLE },
             palette = readPalette(),
-            showFurigana = prefs.getBoolean(KEY_SHOW_FURIGANA, true),
             apiUsage = readApiUsage(),
             providerApiUsage = readProviderApiUsage(),
             maxOcrRetries = prefs.getInt(KEY_MAX_OCR_RETRIES, 3).coerceIn(0, 10),
@@ -117,10 +114,6 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putString(KEY_HIGHLIGHT_PALETTE, json.encodeToString(HighlightPalette.serializer(), palette))
             .apply()
-    }
-
-    fun saveShowFurigana(value: Boolean) {
-        prefs.edit().putBoolean(KEY_SHOW_FURIGANA, value).apply()
     }
 
     fun saveApiUsage(stats: ApiUsageStats) {
@@ -226,7 +219,6 @@ class SettingsStore(context: Context) {
             dropboxCredentialJson = settings.dropboxCredentialJson,
             bookTitle = settings.bookTitle,
             palette = settings.palette,
-            showFurigana = settings.showFurigana,
             apiUsage = settings.apiUsage,
             providerApiUsage = settings.providerApiUsage,
             maxOcrRetries = settings.maxOcrRetries,
@@ -243,7 +235,6 @@ class SettingsStore(context: Context) {
         imported.dropboxCredentialJson?.let { saveDropboxCredentialJson(it) }
         saveBookTitle(imported.bookTitle)
         savePalette(imported.palette)
-        saveShowFurigana(imported.showFurigana)
         saveApiUsage(imported.apiUsage)
         saveProviderApiUsage(imported.providerApiUsage)
         saveMaxOcrRetries(imported.maxOcrRetries)
@@ -258,7 +249,6 @@ class SettingsStore(context: Context) {
         private const val KEY_DROPBOX_CREDENTIAL_JSON = "dropbox_credential_json"
         private const val KEY_BOOK_TITLE = "book_title"
         private const val KEY_HIGHLIGHT_PALETTE = "highlight_palette"
-        private const val KEY_SHOW_FURIGANA = "show_furigana"
         private const val KEY_API_USAGE = "api_usage"
         private const val KEY_PROVIDER_API_USAGE = "provider_api_usage"
         private const val KEY_MAX_OCR_RETRIES = "max_ocr_retries"
