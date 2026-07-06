@@ -324,7 +324,7 @@ fun WorkbenchScreen(
             EntryList(
                 entries = pageEntries,
                 colorMap = composeColors,
-                onEdit = { editingEntryId = it.id },
+                onEdit = { editingEntryId = it.id; drawerOpen = false },
                 onDelete = { target -> confirmDeleteEntry = target },
             )
         }

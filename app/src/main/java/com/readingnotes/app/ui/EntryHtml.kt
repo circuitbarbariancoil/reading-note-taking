@@ -49,6 +49,7 @@ object EntryHtml {
               .divider{height:1px;background:rgba(33,30,26,.12);margin:8px 0;}
               rt{font-size:.5em;}
               .tag{color:#3C5468;background:#E1E6EA;border-radius:8px;padding:0 5px;font-size:.85em;white-space:nowrap;}
+              .cloze{color:transparent;background:#8B7E6A;border-radius:3px;}
               $swatches
             </style></head><body>
               <div class="block">
@@ -65,9 +66,25 @@ object EntryHtml {
         var cursor = 0
         boldRegex.findAll(text).forEach { match ->
             if (match.range.first > cursor) {
+                sb.append(renderCloze(text.substring(cursor, match.range.first), colors))
+            }
+            sb.append("<strong>").append(renderCloze(match.groupValues[1], colors)).append("</strong>")
+            cursor = match.range.last + 1
+        }
+        if (cursor < text.length) sb.append(renderCloze(text.substring(cursor), colors))
+        return sb.toString()
+    }
+
+    private fun renderCloze(text: String, colors: Map<String, String>): String {
+        val clozeRegex = Regex("==((?:(?!==)[\\s\\S])+)==")
+        val sb = StringBuilder()
+        var cursor = 0
+        clozeRegex.findAll(text).forEach { match ->
+            if (match.range.first > cursor) {
                 sb.append(renderHighlights(text.substring(cursor, match.range.first), colors))
             }
-            sb.append("<strong>").append(renderHighlights(match.groupValues[1], colors)).append("</strong>")
+            val content = renderHighlights(match.groupValues[1], colors)
+            sb.append("<span class=\"cloze\">").append(content).append("</span>")
             cursor = match.range.last + 1
         }
         if (cursor < text.length) sb.append(renderHighlights(text.substring(cursor), colors))
@@ -183,14 +200,19 @@ fun EntryHtmlWebView(
             WebView(ctx).apply {
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String?) {
-                        view.postDelayed({ setHeight.value(view.contentHeight) }, 60)
+                        view.postDelayed({
+                            view.evaluateJavascript("document.documentElement.scrollHeight") { result ->
+                                val h = result?.toIntOrNull()
+                                if (h != null && h > 0) setHeight.value(h) else setHeight.value(view.contentHeight)
+                            }
+                        }, 120)
                     }
                 }
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                settings.javaScriptEnabled = false
+                settings.javaScriptEnabled = true
                 settings.domStorageEnabled = false
                 settings.allowFileAccess = false
                 isVerticalScrollBarEnabled = false
