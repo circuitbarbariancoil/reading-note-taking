@@ -18,6 +18,9 @@ import com.readingnotes.app.model.Page
 /** Selection reported from the WebView, in code-point offsets over frozen text. */
 data class Selection(val start: Int, val end: Int)
 
+/** A tap on an existing highlight, reported from JS. */
+data class HighlightTap(val start: Int, val end: Int, val color: String)
+
 private data class WebViewState(val contentKey: String, val html: String)
 
 /**
@@ -80,6 +83,7 @@ private class EmptyActionModeCallback(
 
 private class SelectionBridge(
     val onSelection: (Selection?) -> Unit,
+    val onHighlightTap: (HighlightTap) -> Unit = {},
 ) {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -91,6 +95,11 @@ private class SelectionBridge(
     @JavascriptInterface
     fun onSelectionCleared() {
         main.post { onSelection(null) }
+    }
+
+    @JavascriptInterface
+    fun onHighlightTap(start: Int, end: Int, color: String) {
+        main.post { onHighlightTap(HighlightTap(start, end, color)) }
     }
 }
 
@@ -104,8 +113,10 @@ fun PageWebView(
     onSelectionChange: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
     flash: IntRange? = null,
+    onHighlightTap: (HighlightTap) -> Unit = {},
 ) {
     val currentOnSelection = rememberUpdatedState(onSelectionChange)
+    val currentOnHighlightTap = rememberUpdatedState(onHighlightTap)
     val html = PageHtml.render(page, colors, vertical, interactive = interactive, flash = flash)
 
     AndroidView(
@@ -121,7 +132,10 @@ fun PageWebView(
                 settings.loadWithOverviewMode = true
 
                 if (interactive) {
-                    val bridge = SelectionBridge { currentOnSelection.value(it) }
+                    val bridge = SelectionBridge(
+                        onSelection = { currentOnSelection.value(it) },
+                        onHighlightTap = { currentOnHighlightTap.value(it) },
+                    )
                     addJavascriptInterface(bridge, "Android")
                 }
             }

@@ -1,6 +1,8 @@
 package com.readingnotes.app.ui
 
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,7 +49,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.platform.LocalContext
 import com.readingnotes.app.model.Book
+import com.readingnotes.app.model.CodePoints
 import com.readingnotes.app.model.Entries
 import com.readingnotes.app.model.Entry
 import com.readingnotes.app.model.EntryKind
@@ -91,6 +95,7 @@ fun WorkbenchScreen(
     onCollapseQueue: () -> Unit = {},
     focusRange: IntRange? = null,
 ) {
+    val context = LocalContext.current
     var book by remember(initialBook) { mutableStateOf(initialBook) }
     var pageIndex by remember(initialBook, initialPageIndex) { mutableStateOf(initialPageIndex) }
     var mode by remember { mutableStateOf(MainMode.Text) }
@@ -100,6 +105,7 @@ fun WorkbenchScreen(
     var drawerOpen by remember { mutableStateOf(false) }
     var editingEntryId by remember { mutableStateOf<String?>(null) }
     var pageMenuOpen by remember { mutableStateOf(false) }
+    var tappedHighlight by remember { mutableStateOf<HighlightTap?>(null) }
     var confirmReOcr by remember { mutableStateOf(false) }
     var fullScreenImage by remember { mutableStateOf(false) }
 
@@ -117,7 +123,7 @@ fun WorkbenchScreen(
     }
 
     val page = book.pages[pageIndex.coerceIn(0, book.pages.lastIndex)]
-    val pageEntries = book.entries.filter { it.page == page.page }
+    val pageEntries = book.entries.filter { it.page == page.page }.sortedBy { it.srcStart }
 
     fun save(updated: Book) {
         book = updated
@@ -184,6 +190,12 @@ fun WorkbenchScreen(
                         onSelectionChange = { selection = it },
                         modifier = Modifier.fillMaxSize(),
                         flash = focusRange.takeIf { pageIndex == initialPageIndex },
+                        onHighlightTap = { tap ->
+                            val hl = page.highlights.firstOrNull { h ->
+                                h.color == tap.color && tap.start >= h.start && tap.start < h.end
+                            }
+                            if (hl != null) tappedHighlight = tap
+                        },
                     )
                     else -> PageImage(
                         repository.archiveImagePath(book, page),
@@ -220,14 +232,63 @@ fun WorkbenchScreen(
             }
         }
 
-        selection?.let {
+        selection?.let { sel ->
             if (mode == MainMode.Text && !toolbarCollapsed) {
                 SelectionBar(
                     colors = settings.palette.activeColors(),
                     onHighlight = ::applyHighlight,
                     onExcerpt = ::applyExcerpt,
+                    onSearch = {
+                        val text = page.ocrText?.let { CodePoints.substring(it, sel.start, sel.end) } ?: return@SelectionBar
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(text)))
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                    },
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
                 )
+            }
+        }
+
+        tappedHighlight?.let { tap ->
+            if (mode == MainMode.Text && !toolbarCollapsed) {
+                val hl = page.highlights.firstOrNull { h -> h.color == tap.color && tap.start >= h.start && tap.start < h.end }
+                if (hl != null) {
+                    val linkedEntry = book.entries.firstOrNull { it.highlightId == hl.id }
+                    HighlightActionBar(
+                        currentColor = hl.color,
+                        paletteColors = settings.palette.activeColors(),
+                        onChangeColor = { newColor ->
+                            val newHl = hl.copy(color = newColor)
+                            val newPages = book.pages.map { p ->
+                                if (p.page != page.page) p
+                                else p.copy(highlights = p.highlights.map { if (it.id == hl.id) newHl else it })
+                            }
+                            save(book.copy(pages = newPages))
+                            tappedHighlight = null
+                        },
+                        onDelete = {
+                            val newPages = book.pages.map { p ->
+                                if (p.page != page.page) p
+                                else p.copy(highlights = p.highlights.filterNot { it.id == hl.id })
+                            }
+                            val newEntries = if (linkedEntry != null) book.entries.filterNot { it.id == linkedEntry.id } else book.entries
+                            save(book.copy(pages = newPages, entries = newEntries))
+                            tappedHighlight = null
+                        },
+                        onViewEntry = if (linkedEntry != null) {
+                            { editingEntryId = linkedEntry.id; tappedHighlight = null }
+                        } else null,
+                        onSearch = {
+                            val text = page.ocrText?.let { CodePoints.substring(it, hl.start, hl.end) } ?: return@HighlightActionBar
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(text)))
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                            tappedHighlight = null
+                        },
+                        onDismiss = { tappedHighlight = null },
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
+                    )
+                }
             }
         }
 
@@ -449,6 +510,7 @@ private fun SelectionBar(
     colors: List<com.readingnotes.app.model.HighlightColor>,
     onHighlight: (String) -> Unit,
     onExcerpt: () -> Unit,
+    onSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -470,6 +532,63 @@ private fun SelectionBar(
         }
         Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
         Text("摘录", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onExcerpt))
+        Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
+        Text("搜索", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onSearch))
+    }
+}
+
+@Composable
+private fun HighlightActionBar(
+    currentColor: String,
+    paletteColors: List<com.readingnotes.app.model.HighlightColor>,
+    onChangeColor: (String) -> Unit,
+    onDelete: () -> Unit,
+    onViewEntry: (() -> Unit)?,
+    onSearch: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // Color picker row
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.White)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            paletteColors.forEach { c ->
+                val isActive = c.name == currentColor
+                Box(
+                    modifier = Modifier
+                        .size(if (isActive) 28.dp else 24.dp)
+                        .clip(CircleShape)
+                        .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent))
+                        .then(
+                            if (isActive) Modifier.clip(CircleShape).background(Color.Transparent)
+                            else Modifier
+                        )
+                        .clickable { if (!isActive) onChangeColor(c.name) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isActive) {
+                        Text("✓", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
+            Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
+            if (onViewEntry != null) {
+                Text("条目", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onViewEntry))
+            }
+            Text("搜索", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onSearch))
+            Text("删除", fontSize = 14.sp, color = Color(0xFFB3524A), modifier = Modifier.clickable(onClick = onDelete))
+            Text("✕", fontSize = 14.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDismiss))
+        }
     }
 }
 

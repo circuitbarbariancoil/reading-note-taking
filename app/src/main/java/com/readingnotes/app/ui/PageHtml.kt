@@ -192,6 +192,41 @@ object PageHtml {
             else if(window.Android) Android.onSelectionCleared();
           }
           document.addEventListener('selectionchange', function(){ setTimeout(reportSelection, 30); });
+
+          document.addEventListener('click', function(ev){
+            var sel = window.getSelection();
+            if(sel && !sel.isCollapsed) return;
+            var el = ev.target;
+            while(el && !el.hasAttribute('data-s')) el = el.parentElement;
+            if(!el) return;
+            var cls = el.className || '';
+            var m = cls.match(/hl-(\S+)/);
+            if(!m) return;
+            var color = m[1];
+            var hlStart = Infinity, hlEnd = -1;
+            var spans = document.querySelectorAll('[data-s]');
+            for(var i=0;i<spans.length;i++){
+              if(spans[i].className.indexOf('hl-'+color) >= 0){
+                var s=parseInt(spans[i].getAttribute('data-s'));
+                var e=parseInt(spans[i].getAttribute('data-e'));
+                var adjacent = (s === hlEnd || s <= hlEnd);
+                if(hlStart === Infinity || adjacent){
+                  if(s<hlStart) hlStart=s;
+                  if(e>hlEnd) hlEnd=e;
+                } else {
+                  var clickS = parseInt(el.getAttribute('data-s'));
+                  if(clickS >= hlStart && clickS < hlEnd) break;
+                  hlStart=s; hlEnd=e;
+                }
+              }
+            }
+            var clickS = parseInt(el.getAttribute('data-s'));
+            if(clickS < hlStart || clickS >= hlEnd){
+              hlStart = clickS;
+              hlEnd = parseInt(el.getAttribute('data-e'));
+            }
+            if(window.Android && hlEnd > hlStart) Android.onHighlightTap(hlStart, hlEnd, color);
+          });
         </script>
     """.trimIndent()
 
