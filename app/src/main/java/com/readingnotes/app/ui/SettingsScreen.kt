@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -11,6 +12,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,8 +22,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.readingnotes.app.R
 import com.readingnotes.app.settings.AppSettings
 import com.readingnotes.app.ui.theme.SumiSoft
 
@@ -29,6 +33,7 @@ import com.readingnotes.app.ui.theme.SumiSoft
 fun SettingsScreen(
     settings: AppSettings,
     onSave: (Int, Int) -> Unit,
+    onToggleFurigana: (Boolean) -> Unit,
     onConnectDropbox: () -> Unit,
     onDisconnectDropbox: () -> Unit,
     onProviderSettings: () -> Unit,
@@ -68,6 +73,23 @@ fun SettingsScreen(
             label = { Text("本月 API 上限（0=无限）") },
             singleLine = true,
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.settings_furigana_title))
+                Text(
+                    stringResource(R.string.settings_furigana_desc),
+                    fontSize = 11.sp,
+                    color = SumiSoft,
+                )
+            }
+            Switch(
+                checked = settings.showFurigana,
+                onCheckedChange = onToggleFurigana,
+            )
+        }
         Text("本月 API 调用：${settings.apiUsage.monthCalls} 次 · 累计：${settings.apiUsage.totalCalls} 次")
         Button(
             onClick = {

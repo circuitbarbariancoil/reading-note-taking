@@ -136,6 +136,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reloadSettings()
     }
 
+    fun saveShowFurigana(value: Boolean) {
+        settingsStore.saveShowFurigana(value)
+        reloadSettings()
+    }
+
     fun clearDropboxCredential() {
         settingsStore.clearDropboxCredential()
         reloadSettings()

@@ -3,4 +3,6 @@
     <string name="app_name">読書ノート</string>
     <string name="share_save_label">Save to Notebook</string>
     <string name="share_edit_label">Edit &amp; Save</string>
+    <string name="settings_furigana_title">Show furigana</string>
+    <string name="settings_furigana_desc">Display ruby readings in OCR pages</string>
 </resources>

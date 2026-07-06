@@ -23,6 +23,7 @@ object PageHtml {
         page: Page,
         colors: Map<String, String>,
         vertical: Boolean,
+        showFurigana: Boolean = true,
         fontSizePx: Int = 21,
         interactive: Boolean = false,
         flash: IntRange? = null,
@@ -40,6 +41,7 @@ object PageHtml {
         val selectJs = if (interactive) SELECTION_JS else ""
         val userSelect = if (interactive) "text" else "none"
         val verticalScrollLock = if (vertical) VERTICAL_SCROLL_LOCK_JS else ""
+        val furiganaCss = if (showFurigana) "" else "rt{display:none;}"
         return """
             <!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -54,6 +56,7 @@ object PageHtml {
                 ${if (vertical) "height:100%;overflow-x:auto;overflow-y:hidden;" else ""}
               }
               rt{font-size:.5em;}
+              $furiganaCss
               ::selection{background:#3C546840;}
               .flash{animation:flashfade 1.8s ease-out;}
               @keyframes flashfade{0%,40%{box-shadow:inset 0 0 0 100px #3C546855;}100%{box-shadow:inset 0 0 0 100px transparent;}}

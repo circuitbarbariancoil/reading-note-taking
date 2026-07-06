@@ -50,7 +50,7 @@ fun PagePreviewScreen() {
             }
         }
         VerticalAwareWebView(
-            html = PageHtml.render(SAMPLE_PAGE, SAMPLE_COLORS, vertical),
+            html = PageHtml.render(SAMPLE_PAGE, SAMPLE_COLORS, vertical, showFurigana = true),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(520.dp),
