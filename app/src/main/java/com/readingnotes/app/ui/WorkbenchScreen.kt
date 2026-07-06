@@ -108,6 +108,8 @@ fun WorkbenchScreen(
     var tappedHighlight by remember { mutableStateOf<HighlightTap?>(null) }
     var confirmReOcr by remember { mutableStateOf(false) }
     var fullScreenImage by remember { mutableStateOf(false) }
+    var confirmDeleteEntry by remember { mutableStateOf<Entry?>(null) }
+    var confirmDeleteHighlight by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val colors = remember(settings.palette) { settings.palette.asMap() }
@@ -270,15 +272,7 @@ fun WorkbenchScreen(
                             save(book.copy(pages = newPages))
                             tappedHighlight = null
                         },
-                        onDelete = {
-                            val newPages = book.pages.map { p ->
-                                if (p.page != page.page) p
-                                else p.copy(highlights = p.highlights.filterNot { it.id == hl.id })
-                            }
-                            val newEntries = if (linkedEntry != null) book.entries.filterNot { it.id == linkedEntry.id } else book.entries
-                            save(book.copy(pages = newPages, entries = newEntries))
-                            tappedHighlight = null
-                        },
+                        onDelete = { confirmDeleteHighlight = true },
                         onViewEntry = if (linkedEntry != null) {
                             { editingEntryId = linkedEntry.id; tappedHighlight = null }
                         } else null,
@@ -331,22 +325,7 @@ fun WorkbenchScreen(
                 entries = pageEntries,
                 colorMap = composeColors,
                 onEdit = { editingEntryId = it.id },
-                onDelete = { target ->
-                    val newPages = if (target.kind == EntryKind.highlight) {
-                        book.pages.map { p ->
-                            if (p.page != target.page) p
-                            else p.copy(
-                                highlights = p.highlights.filterNot { hl ->
-                                    hl.id == target.highlightId ||
-                                        (target.highlightId == null && hl.start >= target.srcStart && hl.end <= target.srcEnd)
-                                },
-                            )
-                        }
-                    } else {
-                        book.pages
-                    }
-                    save(book.copy(pages = newPages, entries = book.entries.filterNot { it.id == target.id }))
-                },
+                onDelete = { target -> confirmDeleteEntry = target },
             )
         }
     }
@@ -373,6 +352,83 @@ fun WorkbenchScreen(
                 onDeletePage(page)
             },
         )
+    }
+
+    confirmDeleteEntry?.let { target ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDeleteEntry = null },
+            containerColor = Paper,
+            shape = RoundedCornerShape(16.dp),
+            title = { Text("删除条目？", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Sumi) },
+            text = {
+                Text(
+                    target.text.take(60) + if (target.text.length > 60) "…" else "",
+                    fontSize = 13.sp,
+                    color = SumiSoft,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val t = target
+                    confirmDeleteEntry = null
+                    val newPages = if (t.kind == EntryKind.highlight) {
+                        book.pages.map { p ->
+                            if (p.page != t.page) p
+                            else p.copy(
+                                highlights = p.highlights.filterNot { hl ->
+                                    hl.id == t.highlightId ||
+                                        (t.highlightId == null && hl.start >= t.srcStart && hl.end <= t.srcEnd)
+                                },
+                            )
+                        }
+                    } else {
+                        book.pages
+                    }
+                    save(book.copy(pages = newPages, entries = book.entries.filterNot { it.id == t.id }))
+                }) { Text("删除", color = Color(0xFFB3524A)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmDeleteEntry = null }) { Text("取消", color = SumiSoft) }
+            },
+        )
+    }
+
+    if (confirmDeleteHighlight) {
+        val tap = tappedHighlight
+        val hl = tap?.let { t -> page.highlights.firstOrNull { h -> h.color == t.color && t.start >= h.start && t.start < h.end } }
+        if (hl != null) {
+            val linkedEntry = book.entries.firstOrNull { it.highlightId == hl.id }
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { confirmDeleteHighlight = false },
+                containerColor = Paper,
+                shape = RoundedCornerShape(16.dp),
+                title = { Text("删除高亮？", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Sumi) },
+                text = {
+                    Text(
+                        if (linkedEntry != null) "关联的条目也会一并删除。" else "将移除此高亮标记。",
+                        fontSize = 13.sp,
+                        color = SumiSoft,
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        confirmDeleteHighlight = false
+                        val newPages = book.pages.map { p ->
+                            if (p.page != page.page) p
+                            else p.copy(highlights = p.highlights.filterNot { it.id == hl.id })
+                        }
+                        val newEntries = if (linkedEntry != null) book.entries.filterNot { it.id == linkedEntry.id } else book.entries
+                        save(book.copy(pages = newPages, entries = newEntries))
+                        tappedHighlight = null
+                    }) { Text("删除", color = Color(0xFFB3524A)) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { confirmDeleteHighlight = false }) { Text("取消", color = SumiSoft) }
+                },
+            )
+        } else {
+            confirmDeleteHighlight = false
+        }
     }
 
     if (confirmReOcr) {
