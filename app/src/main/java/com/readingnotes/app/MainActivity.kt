@@ -262,31 +262,37 @@ class MainActivity : ComponentActivity() {
                     viewModel.refreshBooks()
                     viewModel.refreshNotebook()
                 }
-                val isNotebook = viewModel.entryBrowserBookUid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                val notebookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
                 val allBooks = viewModel.books
-                val allEntries = if (isNotebook) {
-                    val notebook = viewModel.notebookBook
-                    notebook?.entries.orEmpty().map { entry ->
-                        BrowsableEntry(entry, notebook?.title ?: "笔记本", notebook?.uid ?: "")
+                val notebook = viewModel.notebookBook
+                val allEntries = buildList {
+                    allBooks.forEach { book ->
+                        book.entries.forEach { entry -> add(BrowsableEntry(entry, book.title, book.uid)) }
                     }
-                } else {
-                    allBooks.flatMap { book ->
-                        book.entries.map { entry -> BrowsableEntry(entry, book.title, book.uid) }
+                    notebook?.let { nb ->
+                        if (allBooks.none { it.uid == notebookUid }) {
+                            nb.entries.forEach { entry -> add(BrowsableEntry(entry, nb.title, nb.uid)) }
+                        }
                     }
+                }
+                val booksForFilter = buildList {
+                    addAll(allBooks)
+                    if (notebook != null && allBooks.none { it.uid == notebookUid }) add(notebook)
                 }
                 EntryBrowserScreen(
                     entries = allEntries,
-                    books = if (isNotebook) emptyList() else allBooks,
+                    books = booksForFilter,
                     filterBookUid = viewModel.entryBrowserBookUid,
                     colors = viewModel.appSettings.palette.colors,
                     onBack = {
+                        val wasNotebook = viewModel.entryBrowserBookUid == notebookUid
                         viewModel.entryBrowserBookUid = null
-                        viewModel.currentScreen = if (isNotebook) ShellScreen.BookShelf
+                        viewModel.currentScreen = if (wasNotebook) ShellScreen.BookShelf
                             else if (viewModel.activeBook != null) ShellScreen.PageList
                             else ShellScreen.BookShelf
                     },
                     onEntryClick = { item ->
-                        val book = if (isNotebook) viewModel.notebookBook
+                        val book = if (item.bookUid == notebookUid) notebook
                             else allBooks.find { it.uid == item.bookUid }
                         if (book != null) {
                             viewModel.activeBook = book
@@ -296,9 +302,8 @@ class MainActivity : ComponentActivity() {
                             viewModel.currentScreen = ShellScreen.EntryEditor
                         }
                     },
-                    title = if (isNotebook) "笔记本" else null,
-                    lockToBook = isNotebook,
-                    onNewEntry = if (isNotebook) ({ viewModel.openNotebookDraft() }) else null,
+                    notebookUid = notebookUid,
+                    onNewNotebookEntry = { viewModel.openNotebookDraft() },
                     onDeleteEntries = { items -> viewModel.deleteEntries(items) },
                 )
             }

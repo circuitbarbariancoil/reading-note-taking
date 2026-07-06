@@ -91,9 +91,8 @@ fun EntryBrowserScreen(
     colors: List<HighlightColor> = emptyList(),
     onBack: () -> Unit,
     onEntryClick: (BrowsableEntry) -> Unit = {},
-    title: String? = null,
-    lockToBook: Boolean = false,
-    onNewEntry: (() -> Unit)? = null,
+    notebookUid: String? = null,
+    onNewNotebookEntry: (() -> Unit)? = null,
     onDeleteEntries: ((List<BrowsableEntry>) -> Unit)? = null,
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -103,6 +102,9 @@ fun EntryBrowserScreen(
     var sortExpanded by remember { mutableStateOf(false) }
     var bookSheetOpen by remember { mutableStateOf(false) }
     var bookSearch by remember { mutableStateOf("") }
+
+    // Notebook mode is dynamic: active when the current filter matches notebookUid
+    val isNotebook = notebookUid != null && filterBook == notebookUid
 
     // Multi-select state
     val selectedIds = remember { mutableStateListOf<String>() }
@@ -212,9 +214,9 @@ fun EntryBrowserScreen(
                         color = SumiSoft,
                         modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 8.dp),
                     )
-                    if (title != null) {
+                    if (isNotebook) {
                         Text(
-                            title,
+                            "笔记本",
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Medium,
                             fontSize = 22.sp,
@@ -222,8 +224,8 @@ fun EntryBrowserScreen(
                         )
                     }
                     Spacer(Modifier.weight(1f))
-                    if (title != null) {
-                        Text("${entries.size} 条", fontSize = 13.sp, color = SumiSoft, modifier = Modifier.padding(end = 8.dp))
+                    if (isNotebook) {
+                        Text("${filtered.size} 条", fontSize = 13.sp, color = SumiSoft, modifier = Modifier.padding(end = 8.dp))
                     }
                 }
             }
@@ -317,7 +319,7 @@ fun EntryBrowserScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!lockToBook && books.isNotEmpty()) {
+                if (books.isNotEmpty()) {
                     Box {
                         val activeBook = filterBook?.let { uid -> books.find { it.uid == uid } }
                         if (activeBook != null) {
@@ -388,7 +390,7 @@ fun EntryBrowserScreen(
             }
 
             // Count label
-            val sortLabel = if (filterBook != null || lockToBook) {
+            val sortLabel = if (filterBook != null) {
                 "${bookSortMode.label}${if (bookAsc) "↑" else "↓"}"
             } else {
                 (if (globalNewest) "最新" else "最早") + (if (groupByBook) " · 按书" else "")
@@ -403,7 +405,7 @@ fun EntryBrowserScreen(
             // Entry list
             if (filtered.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    if (onNewEntry != null) {
+                    if (isNotebook) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("—", fontSize = 24.sp, color = Hairline)
                             Spacer(Modifier.height(8.dp))
@@ -414,7 +416,7 @@ fun EntryBrowserScreen(
                     }
                 }
             } else {
-                val grouped = filterBook == null && !lockToBook && groupByBook
+                val grouped = filterBook == null && groupByBook
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -435,7 +437,7 @@ fun EntryBrowserScreen(
                         item(key = item.entry.id) {
                             EntryCard(
                                 item = item,
-                                showBook = filterBook == null && !lockToBook && !grouped,
+                                showBook = filterBook == null && !grouped,
                                 colors = composeColors,
                                 selected = item.entry.id in selectedIds,
                                 selectMode = selectMode,
@@ -448,15 +450,15 @@ fun EntryBrowserScreen(
                             )
                         }
                     }
-                    item { Spacer(Modifier.height(if (onNewEntry != null) 72.dp else 0.dp)) }
+                    item { Spacer(Modifier.height(if (isNotebook) 72.dp else 0.dp)) }
                 }
             }
         }
 
         // FAB for notebook new-entry (hide in select mode)
-        if (onNewEntry != null && !selectMode) {
+        if (isNotebook && onNewNotebookEntry != null && !selectMode) {
             FloatingActionButton(
-                onClick = onNewEntry,
+                onClick = onNewNotebookEntry,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
                 containerColor = Accent,
                 contentColor = Color.White,
@@ -486,7 +488,7 @@ fun EntryBrowserScreen(
         )
     }
 
-    if (bookSheetOpen && !lockToBook) {
+    if (bookSheetOpen) {
         ModalBottomSheet(onDismissRequest = { bookSheetOpen = false; bookSearch = "" }) {
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 OutlinedTextField(
