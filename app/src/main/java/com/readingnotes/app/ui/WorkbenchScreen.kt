@@ -83,6 +83,7 @@ fun WorkbenchScreen(
     initialPageIndex: Int = 0,
     ocrBusy: Boolean = false,
     ocrError: String? = null,
+    pageOcrError: String? = null,
     onDismissOcrError: () -> Unit = {},
     onOcrPage: (com.readingnotes.app.model.Page) -> Unit = {},
     onChangePageNumber: (com.readingnotes.app.model.Page, Int) -> Unit = { _, _ -> },
@@ -93,6 +94,7 @@ fun WorkbenchScreen(
     queueCollapsed: Boolean = false,
     onExpandQueue: () -> Unit = {},
     onCollapseQueue: () -> Unit = {},
+    onRefreshBooks: () -> Unit = {},
     focusRange: IntRange? = null,
 ) {
     val context = LocalContext.current
@@ -116,6 +118,16 @@ fun WorkbenchScreen(
     val composeColors = remember(settings.palette) {
         settings.palette.colors.associate { hc ->
             hc.name to runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
+        }
+    }
+
+    LaunchedEffect(pageOcrError != null) {
+        onRefreshBooks()
+        if (pageOcrError != null) {
+            while (true) {
+                delay(5000)
+                onRefreshBooks()
+            }
         }
     }
 

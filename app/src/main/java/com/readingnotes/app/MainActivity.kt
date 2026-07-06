@@ -229,14 +229,25 @@ class MainActivity : ComponentActivity() {
                     viewModel.onEnterBookShelf()
                     viewModel.currentScreen = ShellScreen.BookShelf
                 } else {
+                    val currentPage = book.pages.getOrNull(viewModel.activePageIndex)
+                    val currentPageOcrError = currentPage?.let { page ->
+                        viewModel.ocrFailureFor(book.uid, page.page)
+                    }
                     WorkbenchScreen(
                         initialBook = book,
                         initialPageIndex = viewModel.activePageIndex,
                         settings = viewModel.appSettings,
                         repository = viewModel.bookRepository,
                         ocrBusy = viewModel.ocrStatus.values.any { it == OcrJobState.Running },
-                        ocrError = viewModel.ocrErrorMessage,
-                        onDismissOcrError = { viewModel.ocrErrorMessage = null },
+                        ocrError = currentPageOcrError ?: viewModel.ocrErrorMessage,
+                        pageOcrError = currentPageOcrError,
+                        onDismissOcrError = {
+                            if (currentPage != null && currentPageOcrError != null) {
+                                viewModel.clearOcrFailure(book.uid, currentPage.page)
+                            } else {
+                                viewModel.ocrErrorMessage = null
+                            }
+                        },
                         onBack = {
                             viewModel.workbenchFocus = null
                             viewModel.activeBook = viewModel.bookRepository.loadBook(book.uid) ?: book
@@ -253,6 +264,7 @@ class MainActivity : ComponentActivity() {
                         queueCollapsed = viewModel.queueCollapsed,
                         onExpandQueue = { viewModel.queueCollapsed = false },
                         onCollapseQueue = { viewModel.queueCollapsed = true },
+                        onRefreshBooks = { viewModel.refreshBooks() },
                         focusRange = viewModel.workbenchFocus,
                     )
                 }

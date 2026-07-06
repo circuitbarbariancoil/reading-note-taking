@@ -61,6 +61,8 @@ data class PendingPageNumber(val capture: Capture, val ocrText: String)
 
 data class EntryEditTarget(val bookUid: String, val entryId: String)
 
+private data class OcrFailureKey(val bookUid: String, val pageNumber: Int)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsStore = SettingsStore(app)
     val bookRepository = BookRepository(app)
@@ -85,6 +87,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var restoreStatus by mutableStateOf<String?>(null)
     var backupStatus by mutableStateOf<String?>(null)
     val ocrStatus = mutableStateMapOf<String, OcrJobState>()
+    private val ocrFailures = mutableStateMapOf<OcrFailureKey, String>()
     val processQueue = mutableStateListOf<ProcessItem>()
     var notebookBook by mutableStateOf<Book?>(null)
     var notebookDraft by mutableStateOf<Entry?>(null)
@@ -108,7 +111,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshBooks() {
         viewModelScope.launch(Dispatchers.IO) {
             val loaded = bookRepository.listBooks()
-            kotlinx.coroutines.withContext(Dispatchers.Main) { books = loaded }
+            val loadedByUid = loaded.associateBy { it.uid }
+            val currentByUid = books.associateBy { it.uid }
+            val pagesByKey = loaded.associate { book ->
+                book.uid to book.pages.associateBy { page -> page.page }
+            }
+            val activeUid = activeBook?.uid
+            val notebookUid = notebookBook?.uid
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                books = loaded.map { loadedBook ->
+                    currentByUid[loadedBook.uid]?.takeIf { it == loadedBook } ?: loadedBook
+                }
+                activeUid?.let { uid ->
+                    when (val loadedActive = loadedByUid[uid]) {
+                        null -> if (activeBook != null) activeBook = null
+                        else -> if (activeBook != loadedActive) {
+                            activeBook = currentByUid[uid]?.takeIf { it == loadedActive } ?: loadedActive
+                        }
+                    }
+                }
+                if (notebookUid == BookRepository.NOTEBOOK_UID) {
+                    when (val loadedNotebook = loadedByUid[BookRepository.NOTEBOOK_UID]) {
+                        null -> if (notebookBook != null) notebookBook = null
+                        else -> if (notebookBook != loadedNotebook) {
+                            notebookBook = currentByUid[BookRepository.NOTEBOOK_UID]?.takeIf { it == loadedNotebook } ?: loadedNotebook
+                        }
+                    }
+                }
+                ocrFailures.entries.removeAll { (key, _) ->
+                    val page = pagesByKey[key.bookUid]?.get(key.pageNumber)
+                    page == null || !page.ocrText.isNullOrBlank()
+                }
+            }
         }
     }
 
@@ -118,6 +152,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reloadSettings() {
         appSettings = settingsStore.read()
+    }
+
+    fun ocrFailureFor(bookUid: String, pageNumber: Int): String? =
+        ocrFailures[OcrFailureKey(bookUid, pageNumber)]
+
+    fun clearOcrFailure(bookUid: String, pageNumber: Int) {
+        ocrFailures.remove(OcrFailureKey(bookUid, pageNumber))
+    }
+
+    private fun setOcrFailure(bookUid: String, pageNumber: Int, message: String) {
+        ocrFailures[OcrFailureKey(bookUid, pageNumber)] = message
     }
 
     fun saveSettings(maxRetries: Int, monthlyBudget: Int) {
@@ -241,6 +286,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val key = appSettings.geminiApiKey.orEmpty()
         val book = activeBook ?: return
+        ocrErrorMessage = null
         if (!appSettings.hasAnyProvider) {
             ocrStatus[capture.id] = OcrJobState.Failed
             upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = "未配置 OCR 服务（去设置添加）")
@@ -266,6 +312,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ocrStatus.remove(capture.id)
                     upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
                     activeBook = outcome.book
+                    ocrErrorMessage = null
                     refreshBooks()
                     if (jumpToPage) {
                         activePageIndex = outcome.book.pages.indexOfFirst {
@@ -279,12 +326,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ocrStatus.remove(capture.id)
                     upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
                     activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
+                    ocrErrorMessage = null
                     refreshBooks()
                 }
             }
         } catch (t: Throwable) {
             ocrStatus[capture.id] = OcrJobState.Failed
-            ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
             upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
             OcrRetryWorker.enqueueCaptureOcr(getApplication(), book.uid, capture.id)
         }
@@ -538,6 +585,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val book = activeBook ?: return
         val key = appSettings.geminiApiKey.orEmpty()
         val statusKey = "page-${page.page}"
+        clearOcrFailure(book.uid, page.page)
+        ocrErrorMessage = null
         if (isMonthlyApiBudgetExceeded()) {
             showMonthlyApiBudgetError()
             return
@@ -560,12 +609,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 ocrStatus.remove(statusKey)
                 activeBook = updated
+                ocrErrorMessage = null
                 refreshBooks()
                 upsertProcessItem(processQueue, statusKey, ProcessStep.Done)
                 syncToDropbox(updated)
             } catch (t: Throwable) {
                 ocrStatus[statusKey] = OcrJobState.Failed
-                ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
+                setOcrFailure(book.uid, page.page, "OCR 失败: ${t.message?.take(80) ?: "未知错误"}")
                 upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
                 OcrRetryWorker.enqueuePageOcr(getApplication(), book.uid, page.page)
             }
