@@ -1,13 +1,16 @@
 package com.readingnotes.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,14 +24,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,6 +57,8 @@ import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
+
+private val Danger = Color(0xFFB3524A)
 
 /** A browsable entry carrying its parent book's metadata. */
 data class BrowsableEntry(
@@ -65,9 +75,14 @@ enum class EntrySortMode(val label: String) {
 /**
  * The unified full-screen entry browser. Book scope is just a pre-applied,
  * removable filter: entering from a book seeds the book filter pill, which the
- * user can clear to widen to all books. Supports search, sort, and color/tag filtering.
+ * user can clear to widen to all books. Supports search, sort, color/tag
+ * filtering, and long-press multi-select batch deletion.
+ *
+ * When [lockToBook] is true the book-filter pill is hidden (used by the
+ * notebook, which is always scoped to a single "book"). When [onNewEntry] is
+ * non-null a FAB is shown to create a new note.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EntryBrowserScreen(
     entries: List<BrowsableEntry>,
@@ -76,6 +91,10 @@ fun EntryBrowserScreen(
     colors: List<HighlightColor> = emptyList(),
     onBack: () -> Unit,
     onEntryClick: (BrowsableEntry) -> Unit = {},
+    title: String? = null,
+    lockToBook: Boolean = false,
+    onNewEntry: (() -> Unit)? = null,
+    onDeleteEntries: ((List<BrowsableEntry>) -> Unit)? = null,
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var filterBook by remember(filterBookUid) { mutableStateOf(filterBookUid) }
@@ -84,6 +103,15 @@ fun EntryBrowserScreen(
     var sortExpanded by remember { mutableStateOf(false) }
     var bookSheetOpen by remember { mutableStateOf(false) }
     var bookSearch by remember { mutableStateOf("") }
+
+    // Multi-select state
+    val selectedIds = remember { mutableStateListOf<String>() }
+    val selectMode = selectedIds.isNotEmpty()
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    fun toggleSelect(id: String) {
+        if (id in selectedIds) selectedIds.remove(id) else selectedIds.add(id)
+    }
 
     // Global scope: time is the only field; direction + grouping are the choices.
     var globalNewest by remember { mutableStateOf(true) }
@@ -140,223 +168,325 @@ fun EntryBrowserScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Paper)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "‹",
-                fontSize = 26.sp,
-                color = SumiSoft,
-                modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 8.dp),
-            )
-        }
+    Box(modifier = Modifier.fillMaxSize().background(Paper)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top bar
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (selectMode) {
+                    Text(
+                        "已选 ${selectedIds.size} 条",
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 18.sp,
+                        color = Sumi,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "取消",
+                        fontSize = 13.sp,
+                        color = SumiSoft,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { selectedIds.clear() }
+                            .padding(8.dp),
+                    )
+                    if (onDeleteEntries != null) {
+                        Text(
+                            "删除",
+                            fontSize = 13.sp,
+                            color = Danger,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { confirmDelete = true }
+                                .padding(8.dp),
+                        )
+                    }
+                } else {
+                    Text(
+                        "‹",
+                        fontSize = 26.sp,
+                        color = SumiSoft,
+                        modifier = Modifier.clickable(onClick = onBack).padding(horizontal = 8.dp),
+                    )
+                    if (title != null) {
+                        Text(
+                            title,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 22.sp,
+                            color = Sumi,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (title != null) {
+                        Text("${entries.size} 条", fontSize = 13.sp, color = SumiSoft, modifier = Modifier.padding(end = 8.dp))
+                    }
+                }
+            }
 
-        // The trailing "#…" token in the query drives Obsidian-style tag suggestions.
-        val tagToken = remember(searchQuery) {
-            val hash = searchQuery.lastIndexOf('#')
-            if (hash >= 0 && !searchQuery.substring(hash + 1).contains(' ')) searchQuery.substring(hash + 1) else null
-        }
-        val tagSuggestions = remember(tagToken, allTags, entries) {
-            if (tagToken == null) emptyList()
-            else allTags.filter { it.contains(tagToken, ignoreCase = true) }
-                .map { tag -> tag to entries.count { tag in it.entry.tags } }
-                .take(8)
-        }
+            // The trailing "#…" token in the query drives Obsidian-style tag suggestions.
+            val tagToken = remember(searchQuery) {
+                val hash = searchQuery.lastIndexOf('#')
+                if (hash >= 0 && !searchQuery.substring(hash + 1).contains(' ')) searchQuery.substring(hash + 1) else null
+            }
+            val tagSuggestions = remember(tagToken, allTags, entries) {
+                if (tagToken == null) emptyList()
+                else allTags.filter { it.contains(tagToken, ignoreCase = true) }
+                    .map { tag -> tag to entries.count { tag in it.entry.tags } }
+                    .take(8)
+            }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box(modifier = Modifier.weight(1f)) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("搜索摘抄、批注，# 选标签…", fontSize = 13.sp, color = SumiSoft) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                DropdownMenu(
-                    expanded = tagSuggestions.isNotEmpty(),
-                    onDismissRequest = {},
-                    properties = PopupProperties(focusable = false),
-                ) {
-                    tagSuggestions.forEach { (tag, count) ->
-                        DropdownMenuItem(
-                            text = { Text("#$tag $count 条", fontSize = 13.sp) },
-                            onClick = {
-                                filterTag = tag
-                                searchQuery = searchQuery.substring(0, searchQuery.lastIndexOf('#')).trimEnd()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("搜索摘抄、批注，# 选标签…", fontSize = 13.sp, color = SumiSoft) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    DropdownMenu(
+                        expanded = tagSuggestions.isNotEmpty(),
+                        onDismissRequest = {},
+                        properties = PopupProperties(focusable = false),
+                    ) {
+                        tagSuggestions.forEach { (tag, count) ->
+                            DropdownMenuItem(
+                                text = { Text("#$tag $count 条", fontSize = 13.sp) },
+                                onClick = {
+                                    filterTag = tag
+                                    searchQuery = searchQuery.substring(0, searchQuery.lastIndexOf('#')).trimEnd()
+                                },
+                            )
+                        }
+                    }
+                }
+                Box {
+                    Text(
+                        "⇅",
+                        fontSize = 18.sp,
+                        color = Sumi,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { sortExpanded = true }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                    if (filterBook != null) {
+                        BookSortMenu(
+                            expanded = sortExpanded,
+                            onDismiss = { sortExpanded = false },
+                            mode = bookSortMode,
+                            asc = bookAsc,
+                            onSelect = { mode ->
+                                if (mode == bookSortMode) {
+                                    bookAsc = !bookAsc
+                                } else {
+                                    bookSortMode = mode
+                                    bookAsc = mode == EntrySortMode.Page
+                                }
+                                sortExpanded = false
                             },
                         )
-                    }
-                }
-            }
-            Box {
-                Text(
-                    "⇅",
-                    fontSize = 18.sp,
-                    color = Sumi,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { sortExpanded = true }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                )
-                if (filterBook != null) {
-                    BookSortMenu(
-                        expanded = sortExpanded,
-                        onDismiss = { sortExpanded = false },
-                        mode = bookSortMode,
-                        asc = bookAsc,
-                        onSelect = { mode ->
-                            if (mode == bookSortMode) {
-                                bookAsc = !bookAsc
-                            } else {
-                                bookSortMode = mode
-                                bookAsc = mode == EntrySortMode.Page
-                            }
-                            sortExpanded = false
-                        },
-                    )
-                } else {
-                    GlobalSortMenu(
-                        expanded = sortExpanded,
-                        onDismiss = { sortExpanded = false },
-                        newest = globalNewest,
-                        onNewest = { globalNewest = it; sortExpanded = false },
-                        groupByBook = groupByBook,
-                        onGroupToggle = { groupByBook = !groupByBook; sortExpanded = false },
-                    )
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (books.isNotEmpty()) {
-                Box {
-                    val activeBook = filterBook?.let { uid -> books.find { it.uid == uid } }
-                    if (activeBook != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Accent)
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                        ) {
-                            Text(
-                                activeBook.title,
-                                fontSize = 12.sp,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.clickable { bookSheetOpen = true },
-                            )
-                            Text(
-                                " ✕",
-                                fontSize = 12.sp,
-                                color = Color.White,
-                                modifier = Modifier.clickable { filterBook = null },
-                            )
-                        }
                     } else {
-                        FilterChip(
-                            label = "书籍 ▾",
-                            selected = false,
-                            onClick = { bookSheetOpen = true },
+                        GlobalSortMenu(
+                            expanded = sortExpanded,
+                            onDismiss = { sortExpanded = false },
+                            newest = globalNewest,
+                            onNewest = { globalNewest = it; sortExpanded = false },
+                            groupByBook = groupByBook,
+                            onGroupToggle = { groupByBook = !groupByBook; sortExpanded = false },
                         )
                     }
                 }
-                Box(
-                    Modifier
-                        .width(1.dp)
-                        .height(18.dp)
-                        .background(Hairline),
-                )
             }
-            colors.filter { it.active }.forEach { hc ->
-                val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
-                val selected = filterColor == hc.name
-                Box(
-                    modifier = Modifier
-                        .size(if (selected) 24.dp else 20.dp)
-                        .clip(CircleShape)
-                        .background(tint)
-                        .then(if (selected) Modifier.border(2.dp, Sumi, CircleShape) else Modifier)
-                        .clickable { filterColor = if (selected) null else hc.name },
-                )
-            }
-            if (colors.any { it.active } && allTags.isNotEmpty()) {
-                Box(
-                    Modifier
-                        .width(1.dp)
-                        .height(18.dp)
-                        .background(Hairline),
-                )
-            }
-            allTags.take(10).forEach { tag ->
-                FilterChip(
-                    label = "#$tag",
-                    selected = filterTag == tag,
-                    onClick = { filterTag = if (filterTag == tag) null else tag },
-                )
-            }
-        }
 
-        // Count label
-        val sortLabel = if (filterBook != null) {
-            "${bookSortMode.label}${if (bookAsc) "↑" else "↓"}"
-        } else {
-            (if (globalNewest) "最新" else "最早") + (if (groupByBook) " · 按书" else "")
-        }
-        Text(
-            "${filtered.size} 条 · $sortLabel",
-            fontSize = 11.sp,
-            color = SumiSoft,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-        )
-
-        // Entry list
-        if (filtered.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("暂无条目", fontSize = 14.sp, color = SumiSoft)
-            }
-        } else {
-            val grouped = filterBook == null && groupByBook
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            // Filter chips row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                filtered.forEachIndexed { index, item ->
-                    if (grouped && (index == 0 || filtered[index - 1].bookTitle != item.bookTitle)) {
-                        item(key = "header-${item.bookUid}") {
-                            Text(
-                                item.bookTitle,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Sumi,
-                                modifier = Modifier.padding(top = if (index == 0) 0.dp else 8.dp),
+                if (!lockToBook && books.isNotEmpty()) {
+                    Box {
+                        val activeBook = filterBook?.let { uid -> books.find { it.uid == uid } }
+                        if (activeBook != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Accent)
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                            ) {
+                                Text(
+                                    activeBook.title,
+                                    fontSize = 12.sp,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.clickable { bookSheetOpen = true },
+                                )
+                                Text(
+                                    " ✕",
+                                    fontSize = 12.sp,
+                                    color = Color.White,
+                                    modifier = Modifier.clickable { filterBook = null },
+                                )
+                            }
+                        } else {
+                            FilterChip(
+                                label = "书籍 ▾",
+                                selected = false,
+                                onClick = { bookSheetOpen = true },
                             )
                         }
                     }
-                    item(key = item.entry.id) {
-                        EntryCard(item, showBook = filterBook == null && !grouped, onClick = { onEntryClick(item) }, colors = composeColors)
+                    Box(
+                        Modifier
+                            .width(1.dp)
+                            .height(18.dp)
+                            .background(Hairline),
+                    )
+                }
+                colors.filter { it.active }.forEach { hc ->
+                    val tint = runCatching { Color(android.graphics.Color.parseColor(hc.css)) }.getOrDefault(Accent)
+                    val selected = filterColor == hc.name
+                    Box(
+                        modifier = Modifier
+                            .size(if (selected) 24.dp else 20.dp)
+                            .clip(CircleShape)
+                            .background(tint)
+                            .then(if (selected) Modifier.border(2.dp, Sumi, CircleShape) else Modifier)
+                            .clickable { filterColor = if (selected) null else hc.name },
+                    )
+                }
+                if (colors.any { it.active } && allTags.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .width(1.dp)
+                            .height(18.dp)
+                            .background(Hairline),
+                    )
+                }
+                allTags.take(10).forEach { tag ->
+                    FilterChip(
+                        label = "#$tag",
+                        selected = filterTag == tag,
+                        onClick = { filterTag = if (filterTag == tag) null else tag },
+                    )
+                }
+            }
+
+            // Count label
+            val sortLabel = if (filterBook != null || lockToBook) {
+                "${bookSortMode.label}${if (bookAsc) "↑" else "↓"}"
+            } else {
+                (if (globalNewest) "最新" else "最早") + (if (groupByBook) " · 按书" else "")
+            }
+            Text(
+                "${filtered.size} 条 · $sortLabel",
+                fontSize = 11.sp,
+                color = SumiSoft,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
+
+            // Entry list
+            if (filtered.isEmpty()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (onNewEntry != null) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("—", fontSize = 24.sp, color = Hairline)
+                            Spacer(Modifier.height(8.dp))
+                            Text("点击 ＋ 新建笔记，或从其他 app 分享文字", fontSize = 13.sp, color = SumiSoft)
+                        }
+                    } else {
+                        Text("暂无条目", fontSize = 14.sp, color = SumiSoft)
                     }
                 }
+            } else {
+                val grouped = filterBook == null && !lockToBook && groupByBook
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    filtered.forEachIndexed { index, item ->
+                        if (grouped && (index == 0 || filtered[index - 1].bookTitle != item.bookTitle)) {
+                            item(key = "header-${item.bookUid}") {
+                                Text(
+                                    item.bookTitle,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Sumi,
+                                    modifier = Modifier.padding(top = if (index == 0) 0.dp else 8.dp),
+                                )
+                            }
+                        }
+                        item(key = item.entry.id) {
+                            EntryCard(
+                                item = item,
+                                showBook = filterBook == null && !lockToBook && !grouped,
+                                colors = composeColors,
+                                selected = item.entry.id in selectedIds,
+                                selectMode = selectMode,
+                                onClick = {
+                                    if (selectMode) toggleSelect(item.entry.id) else onEntryClick(item)
+                                },
+                                onLongClick = {
+                                    if (onDeleteEntries != null) toggleSelect(item.entry.id)
+                                },
+                            )
+                        }
+                    }
+                    item { Spacer(Modifier.height(if (onNewEntry != null) 72.dp else 0.dp)) }
+                }
+            }
+        }
+
+        // FAB for notebook new-entry (hide in select mode)
+        if (onNewEntry != null && !selectMode) {
+            FloatingActionButton(
+                onClick = onNewEntry,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                containerColor = Accent,
+                contentColor = Color.White,
+            ) {
+                Text("＋", fontSize = 22.sp)
             }
         }
     }
 
-    if (bookSheetOpen) {
+    // Delete confirmation dialog
+    if (confirmDelete && onDeleteEntries != null) {
+        val toDelete = filtered.filter { it.entry.id in selectedIds }
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除条目", fontFamily = FontFamily.Serif) },
+            text = { Text("删除选中的 ${selectedIds.size} 条？此操作不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteEntries(toDelete)
+                    selectedIds.clear()
+                    confirmDelete = false
+                }) { Text("删除", color = Danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("取消", color = SumiSoft) }
+            },
+        )
+    }
+
+    if (bookSheetOpen && !lockToBook) {
         ModalBottomSheet(onDismissRequest = { bookSheetOpen = false; bookSearch = "" }) {
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 OutlinedTextField(
@@ -438,19 +568,27 @@ private fun BookSortMenu(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EntryCard(
     item: BrowsableEntry,
     showBook: Boolean,
     colors: Map<String, Color>,
+    selected: Boolean = false,
+    selectMode: Boolean = false,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White)
-            .clickable(onClick = onClick)
+            .then(
+                if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(12.dp))
+                else Modifier,
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(12.dp),
     ) {
         // Header: book + page
@@ -474,6 +612,18 @@ private fun EntryCard(
                 fontSize = 10.sp,
                 color = Hairline,
             )
+            if (selectMode) {
+                Spacer(Modifier.size(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) Accent else Color(0xFFEDE6D6)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) Text("✓", fontSize = 11.sp, color = Color.White)
+                }
+            }
         }
         Spacer(Modifier.height(6.dp))
         Box {
@@ -487,10 +637,11 @@ private fun EntryCard(
             Box(
                 Modifier
                     .matchParentSize()
-                    .clickable(
+                    .combinedClickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = onClick,
+                        onLongClick = onLongClick,
                     ),
             )
         }

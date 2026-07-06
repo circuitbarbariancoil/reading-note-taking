@@ -54,7 +54,6 @@ enum class ShellScreen {
     Palette,
     EntryBrowser,
     EntryEditor,
-    Notebook,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -614,7 +613,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openNotebook() {
         notebookBook = bookRepository.getOrCreateNotebook()
-        currentScreen = ShellScreen.Notebook
+        entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+        currentScreen = ShellScreen.EntryBrowser
     }
 
     fun refreshNotebook() {
@@ -666,7 +666,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             notebookBook = persisted
             notebookDraft = null
             entryEditTarget = null
-            currentScreen = ShellScreen.Notebook
+            entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+            currentScreen = ShellScreen.EntryBrowser
             refreshBooks()
         }
     }
@@ -679,19 +680,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
             notebookBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
             entryEditTarget = null
-            currentScreen = ShellScreen.Notebook
+            entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+            currentScreen = ShellScreen.EntryBrowser
             refreshBooks()
         }
     }
 
-    fun deleteNoteEntries(ids: List<String>) {
-        val notebook = notebookBook ?: return
+    /** Delete entries from any book(s). Grouped by bookUid for efficiency. */
+    fun deleteEntries(items: List<com.readingnotes.app.ui.BrowsableEntry>) {
         viewModelScope.launch {
-            val updated = notebook.copy(
-                entries = notebook.entries.filterNot { it.id in ids },
-                updatedAt = java.time.Instant.now().toString(),
-            )
-            notebookBook = bookRepository.persist(updated, appSettings.dropboxCredentialJson)
+            items.groupBy { it.bookUid }.forEach { (uid, group) ->
+                val ids = group.map { it.entry.id }.toSet()
+                val book = bookRepository.loadBook(uid) ?: return@forEach
+                val updated = book.copy(
+                    entries = book.entries.filterNot { it.id in ids },
+                    updatedAt = java.time.Instant.now().toString(),
+                )
+                bookRepository.persist(updated, appSettings.dropboxCredentialJson)
+                if (uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID) {
+                    notebookBook = updated
+                }
+                if (uid == activeBook?.uid) {
+                    activeBook = updated
+                }
+            }
             refreshBooks()
         }
     }

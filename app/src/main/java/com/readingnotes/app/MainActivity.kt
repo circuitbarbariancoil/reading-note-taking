@@ -28,7 +28,6 @@ import com.readingnotes.app.ui.BrowsableEntry
 import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.EntryBrowserScreen
 import com.readingnotes.app.ui.EntryEditor
-import com.readingnotes.app.ui.NotebookScreen
 import com.readingnotes.app.ui.OcrJobState
 import com.readingnotes.app.ui.PageNumberSheet
 import com.readingnotes.app.ui.PageListScreen
@@ -95,13 +94,12 @@ class MainActivity : ComponentActivity() {
     private fun AppShell() {
         BackHandler(enabled = viewModel.currentScreen != ShellScreen.BookShelf) {
             viewModel.currentScreen = when (viewModel.currentScreen) {
-                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser, ShellScreen.Notebook -> {
+                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser -> {
                     viewModel.onEnterBookShelf()
                     ShellScreen.BookShelf
                 }
                 ShellScreen.EntryEditor -> {
                     if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser
-                    else if (viewModel.activeBook?.uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID) ShellScreen.Notebook
                     else ShellScreen.Workbench
                 }
                 ShellScreen.Capture -> if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
@@ -260,21 +258,36 @@ class MainActivity : ComponentActivity() {
             )
 
             ShellScreen.EntryBrowser -> {
-                LaunchedEffect(Unit) { viewModel.refreshBooks() }
+                LaunchedEffect(Unit) {
+                    viewModel.refreshBooks()
+                    viewModel.refreshNotebook()
+                }
+                val isNotebook = viewModel.entryBrowserBookUid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
                 val allBooks = viewModel.books
-                val allEntries = allBooks.flatMap { book ->
-                    book.entries.map { entry -> BrowsableEntry(entry, book.title, book.uid) }
+                val allEntries = if (isNotebook) {
+                    val notebook = viewModel.notebookBook
+                    notebook?.entries.orEmpty().map { entry ->
+                        BrowsableEntry(entry, notebook?.title ?: "笔记本", notebook?.uid ?: "")
+                    }
+                } else {
+                    allBooks.flatMap { book ->
+                        book.entries.map { entry -> BrowsableEntry(entry, book.title, book.uid) }
+                    }
                 }
                 EntryBrowserScreen(
                     entries = allEntries,
-                    books = allBooks,
+                    books = if (isNotebook) emptyList() else allBooks,
                     filterBookUid = viewModel.entryBrowserBookUid,
                     colors = viewModel.appSettings.palette.colors,
                     onBack = {
-                        viewModel.currentScreen = if (viewModel.entryBrowserBookUid != null) ShellScreen.PageList else ShellScreen.BookShelf
+                        viewModel.entryBrowserBookUid = null
+                        viewModel.currentScreen = if (isNotebook) ShellScreen.BookShelf
+                            else if (viewModel.activeBook != null) ShellScreen.PageList
+                            else ShellScreen.BookShelf
                     },
                     onEntryClick = { item ->
-                        val book = allBooks.find { it.uid == item.bookUid }
+                        val book = if (isNotebook) viewModel.notebookBook
+                            else allBooks.find { it.uid == item.bookUid }
                         if (book != null) {
                             viewModel.activeBook = book
                             viewModel.activePageIndex = if (item.entry.page != null) book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0) else 0
@@ -283,29 +296,10 @@ class MainActivity : ComponentActivity() {
                             viewModel.currentScreen = ShellScreen.EntryEditor
                         }
                     },
-                )
-            }
-
-            ShellScreen.Notebook -> {
-                LaunchedEffect(Unit) { viewModel.refreshNotebook() }
-                val notebook = viewModel.notebookBook
-                val entries = notebook?.entries.orEmpty()
-
-                NotebookScreen(
-                    entries = entries,
-                    colors = viewModel.appSettings.palette.colors,
-                    onBack = {
-                        viewModel.onEnterBookShelf()
-                        viewModel.currentScreen = ShellScreen.BookShelf
-                    },
-                    onNewEntry = { viewModel.openNotebookDraft() },
-                    onEntryClick = { entry ->
-                        viewModel.activeBook = notebook
-                        viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", entry.id)
-                        viewModel.entryEditorFromBrowser = false
-                        viewModel.currentScreen = ShellScreen.EntryEditor
-                    },
-                    onDeleteEntries = { ids -> viewModel.deleteNoteEntries(ids) },
+                    title = if (isNotebook) "笔记本" else null,
+                    lockToBook = isNotebook,
+                    onNewEntry = if (isNotebook) ({ viewModel.openNotebookDraft() }) else null,
+                    onDeleteEntries = { items -> viewModel.deleteEntries(items) },
                 )
             }
 
@@ -314,7 +308,6 @@ class MainActivity : ComponentActivity() {
                 val book = viewModel.activeBook
                 val target = viewModel.entryEditTarget
                 if (draft != null) {
-                    // New (unsaved) notebook note: created only on save.
                     val notebook = viewModel.notebookBook
                     EntryEditor(
                         entry = draft,
@@ -323,7 +316,8 @@ class MainActivity : ComponentActivity() {
                         onSave = { updated -> viewModel.saveNewNoteEntry(updated) },
                         onDismiss = {
                             viewModel.notebookDraft = null
-                            viewModel.currentScreen = ShellScreen.Notebook
+                            viewModel.entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                            viewModel.currentScreen = ShellScreen.EntryBrowser
                         },
                     )
                 } else if (book == null || target == null) {
@@ -345,9 +339,14 @@ class MainActivity : ComponentActivity() {
                             },
                             onDismiss = {
                                 viewModel.entryEditTarget = null
-                                viewModel.currentScreen = if (isNotebookEntry) ShellScreen.Notebook
-                                    else if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser
-                                    else ShellScreen.Workbench
+                                if (isNotebookEntry) {
+                                    viewModel.entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                                    viewModel.currentScreen = ShellScreen.EntryBrowser
+                                } else if (viewModel.entryEditorFromBrowser) {
+                                    viewModel.currentScreen = ShellScreen.EntryBrowser
+                                } else {
+                                    viewModel.currentScreen = ShellScreen.Workbench
+                                }
                                 viewModel.entryEditorFromBrowser = false
                             },
                             onViewOriginal = {
