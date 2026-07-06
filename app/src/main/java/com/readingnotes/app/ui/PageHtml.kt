@@ -35,11 +35,10 @@ object PageHtml {
             ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}"
         }
         val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors)
-        val startJs = if (flash == null) scrollToStartJs(vertical) else flashJs(flash, vertical)
-        val selectJs = if (interactive) TOUCH_SELECTION_JS else ""
-        // Always disable native selection; interactive mode uses JS-based selection
-        // to avoid the Android magnifier effect.
-        val userSelect = "none"
+        val startJs = if (flash == null) SCROLL_TO_START_JS else flashJs(flash)
+        val selectJs = if (interactive) SELECTION_JS else ""
+        val userSelect = if (interactive) "text" else "none"
+        val verticalScrollLock = if (vertical) VERTICAL_SCROLL_LOCK_JS else ""
         return """
             <!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -51,15 +50,14 @@ object PageHtml {
                 font-family:"Noto Serif CJK JP",serif;
                 font-size:${fontSizePx}px; line-height:2.0;
                 -webkit-user-select:$userSelect; user-select:$userSelect;
-                ${if (vertical) "height:100%;overflow-x:auto;overflow-y:hidden;max-height:100vh;" else ""}
+                ${if (vertical) "height:100%;overflow-x:auto;overflow-y:hidden;" else ""}
               }
               rt{font-size:.5em;}
-              ::selection{background:transparent;}
-              .js-sel{background:#3C546840;}
+              ::selection{background:#3C546840;}
               .flash{animation:flashfade 1.8s ease-out forwards;}
               @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
               $swatches
-            </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs</body></html>
+            </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
         """.trimIndent()
     }
 
@@ -142,16 +140,17 @@ object PageHtml {
      * Scrolls to the text start once loaded: the right edge for vertical-rl,
      * the top for horizontal.
      */
-    private fun scrollToStartJs(vertical: Boolean) = """
+    private val SCROLL_TO_START_JS = """
         <script>
           window.addEventListener('load', function(){
-            ${if (vertical) "document.body.scrollLeft = document.body.scrollWidth;" else "window.scrollTo(0,0);"}
+            var first = document.querySelector('[data-s]');
+            if(first) first.scrollIntoView({inline:'start', block:'start'});
           });
         </script>
     """.trimIndent()
 
     /** Scrolls to and briefly flashes the given code-point range (查看原文 focus). */
-    private fun flashJs(range: IntRange, vertical: Boolean) = """
+    private fun flashJs(range: IntRange) = """
         <script>
           window.addEventListener('load', function(){
             var spans = document.querySelectorAll('[data-s]');
@@ -163,79 +162,45 @@ object PageHtml {
                 if(!first) first = spans[i];
               }
             }
-            if(first) setTimeout(function(){
-              ${if (vertical) """
-              var rect = first.getBoundingClientRect();
-              document.body.scrollLeft = first.offsetLeft - document.body.clientWidth / 2;
-              """ else """
-              first.scrollIntoView({block:'center'});
-              """}
-            }, 50);
+            if(first) setTimeout(function(){ first.scrollIntoView({inline:'center', block:'center'}); }, 50);
           });
         </script>
     """.trimIndent()
 
-    /**
-     * Custom JS-based text selection via touch events. Replaces native selection
-     * to avoid the Android magnifier. Long-press to start, drag to extend.
-     */
-    private val TOUCH_SELECTION_JS = """
+    /** Reports the current selection as code-point offsets to the Kotlin bridge. */
+    private val SELECTION_JS = """
+        <script>
+          function reportSelection(){
+            var sel = window.getSelection();
+            if(!sel || sel.rangeCount === 0 || sel.isCollapsed){
+              if(window.Android) Android.onSelectionCleared();
+              return;
+            }
+            var range = sel.getRangeAt(0);
+            var start = Infinity, end = -1;
+            var spans = document.querySelectorAll('[data-s]');
+            for(var i=0;i<spans.length;i++){
+              var el = spans[i];
+              if(range.intersectsNode(el)){
+                var s = parseInt(el.getAttribute('data-s'));
+                var e = parseInt(el.getAttribute('data-e'));
+                if(s<start) start=s;
+                if(e>end) end=e;
+              }
+            }
+            if(end>start && window.Android) Android.onSelection(start, end);
+            else if(window.Android) Android.onSelectionCleared();
+          }
+          document.addEventListener('selectionchange', function(){ setTimeout(reportSelection, 30); });
+        </script>
+    """.trimIndent()
+
+    /** Prevents vertical scrolling in vertical-rl mode (WebView scrolls despite CSS overflow). */
+    private val VERTICAL_SCROLL_LOCK_JS = """
         <script>
         (function(){
-          var selStart=-1, selEnd=-1, selecting=false, anchorS=-1, anchorE=-1;
-          var timer=null, startX, startY;
-          function clearSel(){
-            var els=document.querySelectorAll('.js-sel');
-            for(var i=0;i<els.length;i++) els[i].classList.remove('js-sel');
-            selStart=-1; selEnd=-1;
-            if(window.Android) Android.onSelectionCleared();
-          }
-          function spanAt(x,y){
-            var el=document.elementFromPoint(x,y);
-            if(!el) return null;
-            while(el && !el.hasAttribute('data-s')) el=el.parentElement;
-            return el;
-          }
-          function applySel(s,e){
-            selStart=s; selEnd=e;
-            var spans=document.querySelectorAll('[data-s]');
-            for(var i=0;i<spans.length;i++){
-              var ss=parseInt(spans[i].getAttribute('data-s'));
-              if(ss>=s && ss<e) spans[i].classList.add('js-sel');
-              else spans[i].classList.remove('js-sel');
-            }
-            if(window.Android && e>s) Android.onSelection(s,e);
-          }
-          document.addEventListener('touchstart', function(ev){
-            var t=ev.touches[0]; startX=t.clientX; startY=t.clientY;
-            timer=setTimeout(function(){
-              var span=spanAt(startX, startY);
-              if(span){
-                anchorS=parseInt(span.getAttribute('data-s'));
-                anchorE=parseInt(span.getAttribute('data-e'));
-                selecting=true;
-                applySel(anchorS, anchorE);
-              }
-            }, 400);
-          }, {passive:true});
-          document.addEventListener('touchmove', function(ev){
-            if(timer){ var t=ev.touches[0]; var dx=t.clientX-startX, dy=t.clientY-startY; if(dx*dx+dy*dy>100){clearTimeout(timer);timer=null;} }
-            if(!selecting) return;
-            ev.preventDefault();
-            var t=ev.touches[0];
-            var span=spanAt(t.clientX, t.clientY);
-            if(span){
-              var s=parseInt(span.getAttribute('data-s'));
-              var e=parseInt(span.getAttribute('data-e'));
-              applySel(Math.min(anchorS,s), Math.max(anchorE,e));
-            }
-          }, {passive:false});
-          document.addEventListener('touchend', function(){
-            if(timer){clearTimeout(timer);timer=null;}
-            if(selecting){selecting=false; return;}
-          });
-          document.addEventListener('click', function(ev){
-            if(selStart>=0){ clearSel(); ev.preventDefault(); }
+          window.addEventListener('scroll', function(){
+            if(window.scrollY !== 0) window.scrollTo(window.scrollX, 0);
           });
         })();
         </script>
@@ -260,8 +225,6 @@ object PageHtml {
             for(var j=hl.length-1;j>=0;j--){
               if(s>=hl[j][0]&&s<hl[j][1]){cls='hl-'+hl[j][2];break;}
             }
-            var hasSel=el.classList.contains('js-sel');
-            if(hasSel) cls=cls?(cls+' js-sel'):'js-sel';
             if(el.className!==cls)el.className=cls;
           }
         }

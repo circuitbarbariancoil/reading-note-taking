@@ -101,7 +101,10 @@ fun PageWebView(
                 settings.javaScriptEnabled = true
                 settings.useWideViewPort = true
                 settings.loadWithOverviewMode = true
-                if (vertical) isVerticalScrollBarEnabled = false
+                if (vertical) {
+                    isVerticalScrollBarEnabled = false
+                    overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                }
                 if (interactive) {
                     val bridge = SelectionBridge { currentOnSelection.value(it) }
                     addJavascriptInterface(bridge, "Android")
