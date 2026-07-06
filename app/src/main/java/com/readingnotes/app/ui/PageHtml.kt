@@ -32,7 +32,8 @@ object PageHtml {
         // horizontal text gets a bottom underline.
         val hlBorder = if (vertical) "border-left" else "border-bottom"
         val swatches = colors.entries.joinToString("\n") { (name, css) ->
-            ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}"
+            ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}" +
+            "\n.hl-$name.hl-focus{background:${css}70;$hlBorder:2.5px solid $css;}"
         }
         val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors)
         val startJs = if (flash == null) SCROLL_TO_START_JS else flashJs(flash)
@@ -56,7 +57,7 @@ object PageHtml {
               ::selection{background:#3C546840;}
               .flash{animation:flashfade 1.8s ease-out forwards;}
               @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
-              .hl-focus{filter:brightness(0.88) saturate(1.4);transition:filter 0.15s ease-out;}
+              .hl-focus{transition:background 0.15s ease-out;}
               $swatches
             </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
         """.trimIndent()
