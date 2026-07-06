@@ -104,7 +104,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshBooks() {
-        books = bookRepository.listBooks()
+        viewModelScope.launch(Dispatchers.IO) {
+            val loaded = bookRepository.listBooks()
+            kotlinx.coroutines.withContext(Dispatchers.Main) { books = loaded }
+        }
     }
 
     fun onEnterBookShelf() {
@@ -144,14 +147,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun saveEditedEntry(updated: Entry) {
         val book = activeBook ?: return
         val fromBrowser = entryEditorFromBrowser
+        val updatedBook = book.copy(
+            entries = book.entries.map { if (it.id == updated.id) updated else it },
+        )
+        activeBook = updatedBook
+        entryEditTarget = null
+        entryEditorFromBrowser = false
+        currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
         viewModelScope.launch {
-            val updatedBook = book.copy(
-                entries = book.entries.map { if (it.id == updated.id) updated else it },
-            )
-            activeBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
-            entryEditTarget = null
-            entryEditorFromBrowser = false
-            currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
+            bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
             refreshBooks()
         }
     }
@@ -618,8 +622,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshNotebook() {
-        notebookBook = bookRepository.loadBook(com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID)
-            ?: bookRepository.getOrCreateNotebook()
+        viewModelScope.launch(Dispatchers.IO) {
+            val nb = bookRepository.loadBook(com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID)
+                ?: bookRepository.getOrCreateNotebook()
+            kotlinx.coroutines.withContext(Dispatchers.Main) { notebookBook = nb }
+        }
     }
 
     fun addNoteToNotebook(text: String) {
@@ -657,52 +664,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveNewNoteEntry(entry: Entry) {
         val notebook = notebookBook ?: bookRepository.getOrCreateNotebook()
+        val updated = notebook.copy(
+            updatedAt = java.time.Instant.now().toString(),
+            entries = notebook.entries + entry,
+        )
+        notebookBook = updated
+        notebookDraft = null
+        entryEditTarget = null
+        entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+        currentScreen = ShellScreen.EntryBrowser
         viewModelScope.launch {
-            val updated = notebook.copy(
-                updatedAt = java.time.Instant.now().toString(),
-                entries = notebook.entries + entry,
-            )
-            val persisted = bookRepository.persist(updated, appSettings.dropboxCredentialJson)
-            notebookBook = persisted
-            notebookDraft = null
-            entryEditTarget = null
-            entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
-            currentScreen = ShellScreen.EntryBrowser
+            bookRepository.persist(updated, appSettings.dropboxCredentialJson)
             refreshBooks()
         }
     }
 
     fun saveEditedNoteEntry(updated: Entry) {
         val notebook = notebookBook ?: return
+        val updatedBook = notebook.copy(
+            entries = notebook.entries.map { if (it.id == updated.id) updated else it },
+        )
+        notebookBook = updatedBook
+        entryEditTarget = null
+        entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+        currentScreen = ShellScreen.EntryBrowser
         viewModelScope.launch {
-            val updatedBook = notebook.copy(
-                entries = notebook.entries.map { if (it.id == updated.id) updated else it },
-            )
-            notebookBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
-            entryEditTarget = null
-            entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
-            currentScreen = ShellScreen.EntryBrowser
+            bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
             refreshBooks()
         }
     }
 
     /** Delete entries from any book(s). Grouped by bookUid for efficiency. */
     fun deleteEntries(items: List<com.readingnotes.app.ui.BrowsableEntry>) {
+        // Update UI state immediately (optimistic)
+        val idsByBook = items.groupBy({ it.bookUid }) { it.entry.id }
+        idsByBook.forEach { (uid, ids) ->
+            val idSet = ids.toSet()
+            if (uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID) {
+                notebookBook = notebookBook?.copy(
+                    entries = notebookBook?.entries.orEmpty().filterNot { it.id in idSet },
+                    updatedAt = java.time.Instant.now().toString(),
+                )
+            }
+            if (uid == activeBook?.uid) {
+                activeBook = activeBook?.copy(
+                    entries = activeBook?.entries.orEmpty().filterNot { it.id in idSet },
+                    updatedAt = java.time.Instant.now().toString(),
+                )
+            }
+        }
+        // Persist in background
         viewModelScope.launch {
-            items.groupBy { it.bookUid }.forEach { (uid, group) ->
-                val ids = group.map { it.entry.id }.toSet()
+            idsByBook.forEach { (uid, ids) ->
+                val idSet = ids.toSet()
                 val book = bookRepository.loadBook(uid) ?: return@forEach
                 val updated = book.copy(
-                    entries = book.entries.filterNot { it.id in ids },
+                    entries = book.entries.filterNot { it.id in idSet },
                     updatedAt = java.time.Instant.now().toString(),
                 )
                 bookRepository.persist(updated, appSettings.dropboxCredentialJson)
-                if (uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID) {
-                    notebookBook = updated
-                }
-                if (uid == activeBook?.uid) {
-                    activeBook = updated
-                }
             }
             refreshBooks()
         }
