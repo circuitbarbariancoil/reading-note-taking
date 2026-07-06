@@ -88,6 +88,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val processQueue = mutableStateListOf<ProcessItem>()
     var notebookBook by mutableStateOf<Book?>(null)
     var notebookDraft by mutableStateOf<Entry?>(null)
+    var entryBrowserOrigin by mutableStateOf(ShellScreen.BookShelf)
+    val entryBrowserListState = androidx.compose.foundation.lazy.LazyListState()
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -626,6 +628,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openNotebook() {
         notebookBook = bookRepository.getOrCreateNotebook()
+        entryBrowserOrigin = ShellScreen.BookShelf
         entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
         currentScreen = ShellScreen.EntryBrowser
     }

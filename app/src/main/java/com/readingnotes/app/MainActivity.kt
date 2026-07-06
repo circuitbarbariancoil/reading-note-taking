@@ -94,9 +94,14 @@ class MainActivity : ComponentActivity() {
     private fun AppShell() {
         BackHandler(enabled = viewModel.currentScreen != ShellScreen.BookShelf) {
             viewModel.currentScreen = when (viewModel.currentScreen) {
-                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser -> {
+                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings -> {
                     viewModel.onEnterBookShelf()
                     ShellScreen.BookShelf
+                }
+                ShellScreen.EntryBrowser -> {
+                    viewModel.entryBrowserBookUid = null
+                    if (viewModel.entryBrowserOrigin == ShellScreen.BookShelf) viewModel.onEnterBookShelf()
+                    viewModel.entryBrowserOrigin
                 }
                 ShellScreen.EntryEditor -> {
                     if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser
@@ -126,6 +131,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onDeleteBooks = { uids -> viewModel.deleteBooks(uids) },
                     onEntries = {
+                        viewModel.entryBrowserOrigin = ShellScreen.BookShelf
                         viewModel.entryBrowserBookUid = null
                         viewModel.currentScreen = ShellScreen.EntryBrowser
                     },
@@ -169,6 +175,7 @@ class MainActivity : ComponentActivity() {
                         onDeletePages = { pages -> viewModel.deletePages(pages) },
                         onDeleteCaptures = { captures -> viewModel.deleteCaptures(captures) },
                         onEntries = {
+                            viewModel.entryBrowserOrigin = ShellScreen.PageList
                             viewModel.entryBrowserBookUid = book.uid
                             viewModel.currentScreen = ShellScreen.EntryBrowser
                         },
@@ -283,13 +290,11 @@ class MainActivity : ComponentActivity() {
                     entries = allEntries,
                     books = booksForFilter,
                     filterBookUid = viewModel.entryBrowserBookUid,
+                    listState = viewModel.entryBrowserListState,
                     colors = viewModel.appSettings.palette.colors,
                     onBack = {
-                        val wasNotebook = viewModel.entryBrowserBookUid == notebookUid
                         viewModel.entryBrowserBookUid = null
-                        viewModel.currentScreen = if (wasNotebook) ShellScreen.BookShelf
-                            else if (viewModel.activeBook != null) ShellScreen.PageList
-                            else ShellScreen.BookShelf
+                        viewModel.currentScreen = viewModel.entryBrowserOrigin
                     },
                     onEntryClick = { item ->
                         val book = if (item.bookUid == notebookUid) notebook

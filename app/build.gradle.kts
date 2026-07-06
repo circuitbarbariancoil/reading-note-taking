@@ -12,8 +12,8 @@ android {
         applicationId = "com.readingnotes.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 31
-        versionName = "0.9.18"
+        versionCode = 32
+        versionName = "0.9.19"
     }
 
     signingConfigs {
