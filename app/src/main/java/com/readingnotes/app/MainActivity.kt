@@ -2,6 +2,7 @@ package com.readingnotes.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -19,7 +20,6 @@ import com.dropbox.core.oauth.DbxCredential
 import com.readingnotes.app.dropbox.DropboxConfig
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
-import com.readingnotes.app.model.Entry
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.settings.SettingsStore
@@ -39,6 +39,10 @@ import com.readingnotes.app.ui.theme.ReadingNotesTheme
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_OPEN_EDITOR = "open_editor"
+    }
+
     private val viewModel: AppViewModel by viewModels { AppViewModel.factory(application) }
 
     private val importBackupLauncher = registerForActivityResult(
@@ -54,6 +58,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIncomingIntent(intent)
         setContent {
             ReadingNotesTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -63,15 +68,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        if (intent.type != "text/plain") return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        // Determine whether to open editor based on which alias was used
+        val component = intent.component?.className ?: ""
+        val openEditor = component.endsWith("ShareEditActivity") ||
+            intent.getBooleanExtra(EXTRA_OPEN_EDITOR, false)
+        if (openEditor) {
+            viewModel.handleShareText(text, openEditor = true)
+        } else {
+            viewModel.handleShareText(text, openEditor = false)
+            Toast.makeText(this, "已添加到笔记本", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
     @Composable
     private fun AppShell() {
         BackHandler(enabled = viewModel.currentScreen != ShellScreen.BookShelf) {
             viewModel.currentScreen = when (viewModel.currentScreen) {
-                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings, ShellScreen.EntryBrowser -> {
+                ShellScreen.PageList, ShellScreen.Settings, ShellScreen.ProviderSettings -> {
                     viewModel.onEnterBookShelf()
                     ShellScreen.BookShelf
                 }
-                ShellScreen.EntryEditor -> if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
+                ShellScreen.EntryBrowser -> {
+                    viewModel.entryBrowserBookUid = null
+                    if (viewModel.entryBrowserOrigin == ShellScreen.BookShelf) viewModel.onEnterBookShelf()
+                    viewModel.entryBrowserOrigin
+                }
+                ShellScreen.EntryEditor -> {
+                    if (viewModel.entryEditorFromBrowser) ShellScreen.EntryBrowser
+                    else ShellScreen.Workbench
+                }
                 ShellScreen.Capture -> if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
@@ -96,9 +131,11 @@ class MainActivity : ComponentActivity() {
                     },
                     onDeleteBooks = { uids -> viewModel.deleteBooks(uids) },
                     onEntries = {
+                        viewModel.entryBrowserOrigin = ShellScreen.BookShelf
                         viewModel.entryBrowserBookUid = null
                         viewModel.currentScreen = ShellScreen.EntryBrowser
                     },
+                    onOpenNotebook = { viewModel.openNotebook() },
                 )
             }
 
@@ -138,6 +175,7 @@ class MainActivity : ComponentActivity() {
                         onDeletePages = { pages -> viewModel.deletePages(pages) },
                         onDeleteCaptures = { captures -> viewModel.deleteCaptures(captures) },
                         onEntries = {
+                            viewModel.entryBrowserOrigin = ShellScreen.PageList
                             viewModel.entryBrowserBookUid = book.uid
                             viewModel.currentScreen = ShellScreen.EntryBrowser
                         },
@@ -191,14 +229,25 @@ class MainActivity : ComponentActivity() {
                     viewModel.onEnterBookShelf()
                     viewModel.currentScreen = ShellScreen.BookShelf
                 } else {
+                    val currentPage = book.pages.getOrNull(viewModel.activePageIndex)
+                    val currentPageOcrError = currentPage?.let { page ->
+                        viewModel.ocrFailureFor(book.uid, page.page)
+                    }
                     WorkbenchScreen(
                         initialBook = book,
                         initialPageIndex = viewModel.activePageIndex,
                         settings = viewModel.appSettings,
                         repository = viewModel.bookRepository,
                         ocrBusy = viewModel.ocrStatus.values.any { it == OcrJobState.Running },
-                        ocrError = viewModel.ocrErrorMessage,
-                        onDismissOcrError = { viewModel.ocrErrorMessage = null },
+                        ocrError = currentPageOcrError ?: viewModel.ocrErrorMessage,
+                        pageOcrError = currentPageOcrError,
+                        onDismissOcrError = {
+                            if (currentPage != null && currentPageOcrError != null) {
+                                viewModel.clearOcrFailure(book.uid, currentPage.page)
+                            } else {
+                                viewModel.ocrErrorMessage = null
+                            }
+                        },
                         onBack = {
                             viewModel.workbenchFocus = null
                             viewModel.activeBook = viewModel.bookRepository.loadBook(book.uid) ?: book
@@ -215,6 +264,7 @@ class MainActivity : ComponentActivity() {
                         queueCollapsed = viewModel.queueCollapsed,
                         onExpandQueue = { viewModel.queueCollapsed = false },
                         onCollapseQueue = { viewModel.queueCollapsed = true },
+                        onRefreshBooks = { viewModel.refreshBooks() },
                         focusRange = viewModel.workbenchFocus,
                     )
                 }
@@ -227,53 +277,106 @@ class MainActivity : ComponentActivity() {
             )
 
             ShellScreen.EntryBrowser -> {
-                LaunchedEffect(Unit) { viewModel.refreshBooks() }
+                LaunchedEffect(Unit) {
+                    viewModel.refreshBooks()
+                    viewModel.refreshNotebook()
+                }
+                val notebookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
                 val allBooks = viewModel.books
-                val allEntries = allBooks.flatMap { book ->
-                    book.entries.map { entry -> BrowsableEntry(entry, book.title, book.uid) }
+                val notebook = viewModel.notebookBook
+                val allEntries = buildList {
+                    allBooks.forEach { book ->
+                        book.entries.forEach { entry -> add(BrowsableEntry(entry, book.title, book.uid)) }
+                    }
+                    notebook?.let { nb ->
+                        if (allBooks.none { it.uid == notebookUid }) {
+                            nb.entries.forEach { entry -> add(BrowsableEntry(entry, nb.title, nb.uid)) }
+                        }
+                    }
+                }
+                val booksForFilter = buildList {
+                    addAll(allBooks)
+                    if (notebook != null && allBooks.none { it.uid == notebookUid }) add(notebook)
                 }
                 EntryBrowserScreen(
                     entries = allEntries,
-                    books = allBooks,
+                    books = booksForFilter,
                     filterBookUid = viewModel.entryBrowserBookUid,
+                    listState = viewModel.entryBrowserListState,
                     colors = viewModel.appSettings.palette.colors,
                     onBack = {
-                        viewModel.currentScreen = if (viewModel.entryBrowserBookUid != null) ShellScreen.PageList else ShellScreen.BookShelf
+                        viewModel.entryBrowserBookUid = null
+                        viewModel.currentScreen = viewModel.entryBrowserOrigin
                     },
                     onEntryClick = { item ->
-                        val book = allBooks.find { it.uid == item.bookUid }
+                        val book = if (item.bookUid == notebookUid) notebook
+                            else allBooks.find { it.uid == item.bookUid }
                         if (book != null) {
                             viewModel.activeBook = book
-                            viewModel.activePageIndex = book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0)
+                            viewModel.activePageIndex = if (item.entry.page != null) book.pages.indexOfFirst { it.page == item.entry.page }.coerceAtLeast(0) else 0
                             viewModel.entryEditorFromBrowser = true
                             viewModel.entryEditTarget = EntryEditTarget(book.uid, item.entry.id)
                             viewModel.currentScreen = ShellScreen.EntryEditor
                         }
                     },
+                    notebookUid = notebookUid,
+                    onNewNotebookEntry = { viewModel.openNotebookDraft() },
+                    onDeleteEntries = { items -> viewModel.deleteEntries(items) },
                 )
             }
 
             ShellScreen.EntryEditor -> {
+                val draft = viewModel.notebookDraft
                 val book = viewModel.activeBook
                 val target = viewModel.entryEditTarget
-                if (book == null || target == null) {
+                if (draft != null) {
+                    val notebook = viewModel.notebookBook
+                    EntryEditor(
+                        entry = draft,
+                        palette = viewModel.appSettings.palette,
+                        knownTags = notebook?.entries.orEmpty().flatMap { it.tags }.distinct().sorted(),
+                        onSave = { updated -> viewModel.saveNewNoteEntry(updated) },
+                        onDismiss = {
+                            viewModel.notebookDraft = null
+                            viewModel.entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                            viewModel.currentScreen = ShellScreen.EntryBrowser
+                        },
+                    )
+                } else if (book == null || target == null) {
                     viewModel.currentScreen = ShellScreen.BookShelf
                 } else {
                     val entry = book.entries.firstOrNull { it.id == target.entryId }
                     if (entry == null) {
                         viewModel.currentScreen = ShellScreen.BookShelf
                     } else {
-                        val pageIndex = book.pages.indexOfFirst { it.page == entry.page }.coerceAtLeast(0)
+                        val isNotebookEntry = book.uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                        val pageIndex = if (entry.page != null) book.pages.indexOfFirst { it.page == entry.page }.coerceAtLeast(0) else 0
                         EntryEditor(
                             entry = entry,
                             palette = viewModel.appSettings.palette,
                             knownTags = book.entries.flatMap { it.tags }.distinct().sorted(),
-                            onSave = { updated -> viewModel.saveEditedEntry(updated) },
-                            onDismiss = { viewModel.dismissEntryEditor() },
+                            onSave = { updated ->
+                                if (isNotebookEntry) viewModel.saveEditedNoteEntry(updated)
+                                else viewModel.saveEditedEntry(updated)
+                            },
+                            onDismiss = {
+                                viewModel.entryEditTarget = null
+                                if (isNotebookEntry) {
+                                    viewModel.entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+                                    viewModel.currentScreen = ShellScreen.EntryBrowser
+                                } else if (viewModel.entryEditorFromBrowser) {
+                                    viewModel.currentScreen = ShellScreen.EntryBrowser
+                                } else {
+                                    viewModel.currentScreen = ShellScreen.Workbench
+                                }
+                                viewModel.entryEditorFromBrowser = false
+                            },
                             onViewOriginal = {
-                                viewModel.workbenchFocus = viewModel.locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
-                                viewModel.activePageIndex = pageIndex
-                                viewModel.currentScreen = ShellScreen.Workbench
+                                if (entry.page != null) {
+                                    viewModel.workbenchFocus = viewModel.locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
+                                    viewModel.activePageIndex = pageIndex
+                                    viewModel.currentScreen = ShellScreen.Workbench
+                                }
                             },
                         )
                     }

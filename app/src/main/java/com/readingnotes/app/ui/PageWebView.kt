@@ -18,6 +18,9 @@ import com.readingnotes.app.model.Page
 /** Selection reported from the WebView, in code-point offsets over frozen text. */
 data class Selection(val start: Int, val end: Int)
 
+/** A tap on an existing highlight, reported from JS. */
+data class HighlightTap(val start: Int, val end: Int, val color: String)
+
 private data class WebViewState(val contentKey: String, val html: String)
 
 /**
@@ -28,6 +31,24 @@ private data class WebViewState(val contentKey: String, val html: String)
 private class SelectionWebView : WebView {
     constructor(context: Context) : super(context)
     constructor(context: Context, attrs: AttributeSet?) : super(context, attrs)
+
+    /** When true (vertical/tategaki mode), vertical scrolling is clamped to 0. */
+    var lockVerticalScroll = false
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        if (lockVerticalScroll && t != 0) scrollTo(l, 0)
+    }
+
+    override fun overScrollBy(
+        deltaX: Int, deltaY: Int, scrollX: Int, scrollY: Int,
+        scrollRangeX: Int, scrollRangeY: Int, maxOverScrollX: Int, maxOverScrollY: Int,
+        isTouchEvent: Boolean,
+    ): Boolean = super.overScrollBy(
+        deltaX, if (lockVerticalScroll) 0 else deltaY, scrollX, if (lockVerticalScroll) 0 else scrollY,
+        scrollRangeX, scrollRangeY, maxOverScrollX, if (lockVerticalScroll) 0 else maxOverScrollY,
+        isTouchEvent,
+    )
 
     // Keep the action mode alive (so the selection isn't immediately cleared)
     // but strip every menu item, hiding the native copy/paste bar. Returning
@@ -62,6 +83,7 @@ private class EmptyActionModeCallback(
 
 private class SelectionBridge(
     val onSelection: (Selection?) -> Unit,
+    val onHighlightTap: (HighlightTap?) -> Unit = {},
 ) {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -73,6 +95,16 @@ private class SelectionBridge(
     @JavascriptInterface
     fun onSelectionCleared() {
         main.post { onSelection(null) }
+    }
+
+    @JavascriptInterface
+    fun onHighlightTap(start: Int, end: Int, color: String) {
+        main.post { onHighlightTap(HighlightTap(start, end, color)) }
+    }
+
+    @JavascriptInterface
+    fun onHighlightDismissed() {
+        main.post { onHighlightTap(null as HighlightTap?) }
     }
 }
 
@@ -86,8 +118,10 @@ fun PageWebView(
     onSelectionChange: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
     flash: IntRange? = null,
+    onHighlightTap: (HighlightTap?) -> Unit = {},
 ) {
     val currentOnSelection = rememberUpdatedState(onSelectionChange)
+    val currentOnHighlightTap = rememberUpdatedState(onHighlightTap)
     val html = PageHtml.render(page, colors, vertical, interactive = interactive, flash = flash)
 
     AndroidView(
@@ -98,16 +132,22 @@ fun PageWebView(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                settings.javaScriptEnabled = interactive
+                settings.javaScriptEnabled = true
                 settings.useWideViewPort = true
                 settings.loadWithOverviewMode = true
+
                 if (interactive) {
-                    val bridge = SelectionBridge { currentOnSelection.value(it) }
+                    val bridge = SelectionBridge(
+                        onSelection = { currentOnSelection.value(it) },
+                        onHighlightTap = { currentOnHighlightTap.value(it) },
+                    )
                     addJavascriptInterface(bridge, "Android")
                 }
             }
         },
         update = { web ->
+            web.lockVerticalScroll = vertical
+            web.isVerticalScrollBarEnabled = !vertical
             // Structural key: everything that requires a full HTML reload.
             // Highlights are NOT included — they update via JS to preserve scroll.
             val contentKey = "${page.page}|${page.ocrText?.hashCode()}|$vertical|$interactive|$flash"

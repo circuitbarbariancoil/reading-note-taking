@@ -19,6 +19,7 @@ import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
 import com.readingnotes.app.model.CodePoints
 import com.readingnotes.app.model.Entry
+import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.model.MarkupText
 import com.readingnotes.app.model.Page
@@ -60,6 +61,8 @@ data class PendingPageNumber(val capture: Capture, val ocrText: String)
 
 data class EntryEditTarget(val bookUid: String, val entryId: String)
 
+private data class OcrFailureKey(val bookUid: String, val pageNumber: Int)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsStore = SettingsStore(app)
     val bookRepository = BookRepository(app)
@@ -84,7 +87,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var restoreStatus by mutableStateOf<String?>(null)
     var backupStatus by mutableStateOf<String?>(null)
     val ocrStatus = mutableStateMapOf<String, OcrJobState>()
+    private val ocrFailures = mutableStateMapOf<OcrFailureKey, String>()
     val processQueue = mutableStateListOf<ProcessItem>()
+    var notebookBook by mutableStateOf<Book?>(null)
+    var notebookDraft by mutableStateOf<Entry?>(null)
+    var entryBrowserOrigin by mutableStateOf(ShellScreen.BookShelf)
+    val entryBrowserListState = androidx.compose.foundation.lazy.LazyListState()
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -101,7 +109,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshBooks() {
-        books = bookRepository.listBooks()
+        viewModelScope.launch(Dispatchers.IO) {
+            val loaded = bookRepository.listBooks()
+            val loadedByUid = loaded.associateBy { it.uid }
+            val currentByUid = books.associateBy { it.uid }
+            val pagesByKey = loaded.associate { book ->
+                book.uid to book.pages.associateBy { page -> page.page }
+            }
+            val activeUid = activeBook?.uid
+            val notebookUid = notebookBook?.uid
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                books = loaded.map { loadedBook ->
+                    currentByUid[loadedBook.uid]?.takeIf { it == loadedBook } ?: loadedBook
+                }
+                activeUid?.let { uid ->
+                    when (val loadedActive = loadedByUid[uid]) {
+                        null -> if (activeBook != null) activeBook = null
+                        else -> if (activeBook != loadedActive) {
+                            activeBook = currentByUid[uid]?.takeIf { it == loadedActive } ?: loadedActive
+                        }
+                    }
+                }
+                if (notebookUid == BookRepository.NOTEBOOK_UID) {
+                    when (val loadedNotebook = loadedByUid[BookRepository.NOTEBOOK_UID]) {
+                        null -> if (notebookBook != null) notebookBook = null
+                        else -> if (notebookBook != loadedNotebook) {
+                            notebookBook = currentByUid[BookRepository.NOTEBOOK_UID]?.takeIf { it == loadedNotebook } ?: loadedNotebook
+                        }
+                    }
+                }
+                ocrFailures.entries.removeAll { (key, _) ->
+                    val page = pagesByKey[key.bookUid]?.get(key.pageNumber)
+                    page == null || !page.ocrText.isNullOrBlank()
+                }
+            }
+        }
     }
 
     fun onEnterBookShelf() {
@@ -110,6 +152,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reloadSettings() {
         appSettings = settingsStore.read()
+    }
+
+    fun ocrFailureFor(bookUid: String, pageNumber: Int): String? =
+        ocrFailures[OcrFailureKey(bookUid, pageNumber)]
+
+    fun clearOcrFailure(bookUid: String, pageNumber: Int) {
+        ocrFailures.remove(OcrFailureKey(bookUid, pageNumber))
+    }
+
+    private fun setOcrFailure(bookUid: String, pageNumber: Int, message: String) {
+        ocrFailures[OcrFailureKey(bookUid, pageNumber)] = message
     }
 
     fun saveSettings(maxRetries: Int, monthlyBudget: Int) {
@@ -138,18 +191,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reloadSettings()
     }
 
+    private fun patchBooks(updatedBooks: Collection<Book>) {
+        if (updatedBooks.isEmpty()) return
+        val updatedByUid = updatedBooks.associateBy { it.uid }
+        val existing = books
+        val replaced = existing.map { updatedByUid[it.uid] ?: it }
+        val missing = updatedBooks.filter { updated -> existing.none { it.uid == updated.uid } }
+        books = if (missing.isEmpty()) replaced else replaced + missing
+    }
+
     fun saveEditedEntry(updated: Entry) {
         val book = activeBook ?: return
         val fromBrowser = entryEditorFromBrowser
+        val updatedBook = book.copy(
+            entries = book.entries.map { if (it.id == updated.id) updated else it },
+        )
+        activeBook = updatedBook
+        entryEditTarget = null
+        entryEditorFromBrowser = false
+        currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
+        patchBooks(listOf(updatedBook))
         viewModelScope.launch {
-            val updatedBook = book.copy(
-                entries = book.entries.map { if (it.id == updated.id) updated else it },
-            )
-            activeBook = bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
-            entryEditTarget = null
-            entryEditorFromBrowser = false
-            currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
-            refreshBooks()
+            bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
         }
     }
 
@@ -223,6 +286,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val key = appSettings.geminiApiKey.orEmpty()
         val book = activeBook ?: return
+        ocrErrorMessage = null
         if (!appSettings.hasAnyProvider) {
             ocrStatus[capture.id] = OcrJobState.Failed
             upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = "未配置 OCR 服务（去设置添加）")
@@ -248,6 +312,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ocrStatus.remove(capture.id)
                     upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
                     activeBook = outcome.book
+                    ocrErrorMessage = null
                     refreshBooks()
                     if (jumpToPage) {
                         activePageIndex = outcome.book.pages.indexOfFirst {
@@ -261,12 +326,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ocrStatus.remove(capture.id)
                     upsertProcessItem(processQueue, capture.id, ProcessStep.Done)
                     activeBook = bookRepository.storeCaptureOcrText(book, capture, outcome.ocrText)
+                    ocrErrorMessage = null
                     refreshBooks()
                 }
             }
         } catch (t: Throwable) {
             ocrStatus[capture.id] = OcrJobState.Failed
-            ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
             upsertProcessItem(processQueue, capture.id, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
             OcrRetryWorker.enqueueCaptureOcr(getApplication(), book.uid, capture.id)
         }
@@ -459,10 +524,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteBooks(uids: List<String>) {
-        for (uid in uids) {
+        val toDelete = uids.filter { it != com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID }
+        for (uid in toDelete) {
             bookRepository.deleteBook(uid)
         }
-        if (activeBook?.uid in uids) {
+        if (activeBook?.uid in toDelete) {
             activeBook = null
             currentScreen = ShellScreen.BookShelf
         }
@@ -519,6 +585,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val book = activeBook ?: return
         val key = appSettings.geminiApiKey.orEmpty()
         val statusKey = "page-${page.page}"
+        clearOcrFailure(book.uid, page.page)
+        ocrErrorMessage = null
         if (isMonthlyApiBudgetExceeded()) {
             showMonthlyApiBudgetError()
             return
@@ -541,12 +609,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 ocrStatus.remove(statusKey)
                 activeBook = updated
+                ocrErrorMessage = null
                 refreshBooks()
                 upsertProcessItem(processQueue, statusKey, ProcessStep.Done)
                 syncToDropbox(updated)
             } catch (t: Throwable) {
                 ocrStatus[statusKey] = OcrJobState.Failed
-                ocrErrorMessage = "OCR 失败: ${t.message?.take(80) ?: "未知错误"}"
+                setOcrFailure(book.uid, page.page, "OCR 失败: ${t.message?.take(80) ?: "未知错误"}")
                 upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
                 OcrRetryWorker.enqueuePageOcr(getApplication(), book.uid, page.page)
             }
@@ -601,6 +670,135 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 backupStatus = if (count > 0) "已恢复 $count 本书 + 设置" else "没有需要恢复的内容"
             } catch (e: Exception) {
                 backupStatus = "恢复失败: ${e.message?.take(60)}"
+            }
+        }
+    }
+
+    // ── Notebook ─────────────────────────────────────────────────────────
+
+    fun openNotebook() {
+        notebookBook = bookRepository.getOrCreateNotebook()
+        entryBrowserOrigin = ShellScreen.BookShelf
+        entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+        currentScreen = ShellScreen.EntryBrowser
+    }
+
+    fun refreshNotebook() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val nb = bookRepository.loadBook(com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID)
+                ?: bookRepository.getOrCreateNotebook()
+            kotlinx.coroutines.withContext(Dispatchers.Main) { notebookBook = nb }
+        }
+    }
+
+    fun addNoteToNotebook(text: String) {
+        viewModelScope.launch {
+            val updated = bookRepository.addNoteToNotebook(text)
+            notebookBook = updated
+            refreshBooks()
+            syncToDropbox(updated)
+        }
+    }
+
+    /** Handle shared text: save silently or open the editor with a draft. */
+    fun handleShareText(text: String, openEditor: Boolean) {
+        if (openEditor) {
+            openNotebookDraft(text)
+        } else {
+            addNoteToNotebook(text)
+        }
+    }
+
+    /** Open the entry editor with an unsaved draft; the note is created on save. */
+    fun openNotebookDraft(text: String = "") {
+        notebookBook = bookRepository.getOrCreateNotebook()
+        val now = java.time.Instant.now().toString()
+        notebookDraft = Entry(
+            id = java.util.UUID.randomUUID().toString().take(8),
+            page = null,
+            text = text,
+            kind = EntryKind.note,
+            createdAt = now,
+            updatedAt = now,
+        )
+        currentScreen = ShellScreen.EntryEditor
+    }
+
+    fun saveNewNoteEntry(entry: Entry) {
+        val notebook = notebookBook ?: bookRepository.getOrCreateNotebook()
+        val updated = notebook.copy(
+            updatedAt = java.time.Instant.now().toString(),
+            entries = notebook.entries + entry,
+        )
+        notebookBook = updated
+        notebookDraft = null
+        entryEditTarget = null
+        entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+        currentScreen = ShellScreen.EntryBrowser
+        patchBooks(listOf(updated))
+        viewModelScope.launch {
+            bookRepository.persist(updated, appSettings.dropboxCredentialJson)
+        }
+    }
+
+    fun saveEditedNoteEntry(updated: Entry) {
+        val notebook = notebookBook ?: return
+        val updatedBook = notebook.copy(
+            entries = notebook.entries.map { if (it.id == updated.id) updated else it },
+        )
+        notebookBook = updatedBook
+        entryEditTarget = null
+        entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
+        currentScreen = ShellScreen.EntryBrowser
+        patchBooks(listOf(updatedBook))
+        viewModelScope.launch {
+            bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
+        }
+    }
+
+    /** Delete entries from any book(s). Grouped by bookUid for efficiency. */
+    fun deleteEntries(items: List<com.readingnotes.app.ui.BrowsableEntry>) {
+        val idsByBook = items.groupBy({ it.bookUid }) { it.entry.id }
+        val now = java.time.Instant.now().toString()
+        val idSetsByBook = idsByBook.mapValues { (_, ids) -> ids.toSet() }
+        val updatedBooks = books.mapNotNull { book ->
+            val idSet = idSetsByBook[book.uid] ?: return@mapNotNull null
+            book.copy(
+                entries = book.entries.filterNot { it.id in idSet },
+                updatedAt = now,
+            )
+        }.toMutableList()
+        idsByBook[com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID]?.let { ids ->
+            val idSet = ids.toSet()
+            notebookBook = notebookBook?.copy(
+                entries = notebookBook?.entries.orEmpty().filterNot { it.id in idSet },
+                updatedAt = now,
+            )?.also { updatedBook ->
+                if (updatedBooks.none { it.uid == updatedBook.uid }) updatedBooks.add(updatedBook)
+            }
+        }
+        activeBook?.uid?.let { uid ->
+            idsByBook[uid]?.let { ids ->
+                val idSet = ids.toSet()
+                activeBook = activeBook?.copy(
+                    entries = activeBook?.entries.orEmpty().filterNot { it.id in idSet },
+                    updatedAt = now,
+                )?.also { updatedBook ->
+                    if (updatedBooks.none { it.uid == updatedBook.uid }) updatedBooks.add(updatedBook)
+                }
+            }
+        }
+        patchBooks(updatedBooks)
+        // Persist in background
+        viewModelScope.launch {
+            idsByBook.forEach { (uid, ids) ->
+                val idSet = ids.toSet()
+                val book = bookRepository.loadBook(uid) ?: return@forEach
+                val updated = book.copy(
+                    entries = book.entries.filterNot { it.id in idSet },
+                    updatedAt = java.time.Instant.now().toString(),
+                )
+                bookRepository.persist(updated, appSettings.dropboxCredentialJson)
             }
         }
     }

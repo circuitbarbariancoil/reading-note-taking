@@ -64,7 +64,7 @@ data class PageHighlight(
     val color: String,
 )
 
-enum class EntryKind { highlight, excerpt }
+enum class EntryKind { highlight, excerpt, note }
 
 /**
  * An extracted card: an independent editable copy of a span of OCR text.
@@ -73,9 +73,9 @@ enum class EntryKind { highlight, excerpt }
 @Serializable
 data class Entry(
     val id: String,
-    val page: Int,
-    val srcStart: Int,
-    val srcEnd: Int,
+    val page: Int? = null,
+    val srcStart: Int = 0,
+    val srcEnd: Int = 0,
     val text: String,
     val kind: EntryKind = EntryKind.highlight,
     /** Id of the [PageHighlight] this entry was created from, for paired deletion. */

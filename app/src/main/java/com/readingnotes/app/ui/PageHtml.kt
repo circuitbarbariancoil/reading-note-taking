@@ -32,12 +32,14 @@ object PageHtml {
         // horizontal text gets a bottom underline.
         val hlBorder = if (vertical) "border-left" else "border-bottom"
         val swatches = colors.entries.joinToString("\n") { (name, css) ->
-            ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}"
+            ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}" +
+            "\n.hl-$name.hl-focus{background:${css}70;$hlBorder:2.5px solid $css;}"
         }
         val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors)
         val startJs = if (flash == null) SCROLL_TO_START_JS else flashJs(flash)
         val selectJs = if (interactive) SELECTION_JS else ""
         val userSelect = if (interactive) "text" else "none"
+        val verticalScrollLock = if (vertical) VERTICAL_SCROLL_LOCK_JS else ""
         return """
             <!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -53,10 +55,11 @@ object PageHtml {
               }
               rt{font-size:.5em;}
               ::selection{background:#3C546840;}
-              .flash{animation:flashfade 1.8s ease-out forwards;}
-              @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
+              .flash{animation:flashfade 1.8s ease-out;}
+              @keyframes flashfade{0%,40%{box-shadow:inset 0 0 0 100px #3C546855;}100%{box-shadow:inset 0 0 0 100px transparent;}}
+              .hl-focus{transition:background 0.15s ease-out;}
               $swatches
-            </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs</body></html>
+            </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
         """.trimIndent()
     }
 
@@ -115,7 +118,6 @@ object PageHtml {
     private fun isBaseChar(cp: Int): Boolean {
         val c = cp.toChar()
         return Character.UnicodeBlock.of(cp) == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
-            (c in '\u3040'..'\u309F') || // hiragana
             (c in '\u30A0'..'\u30FF') || // katakana
             (c in 'A'..'Z') || (c in 'a'..'z')
     }
@@ -191,6 +193,75 @@ object PageHtml {
             else if(window.Android) Android.onSelectionCleared();
           }
           document.addEventListener('selectionchange', function(){ setTimeout(reportSelection, 30); });
+
+          function clearFocus(){
+            var focused = document.querySelectorAll('.hl-focus');
+            for(var i=0;i<focused.length;i++) focused[i].classList.remove('hl-focus');
+          }
+
+          document.addEventListener('selectionchange', function(){
+            var sel = window.getSelection();
+            if(sel && !sel.isCollapsed) {
+              clearFocus();
+              if(window.Android) Android.onHighlightDismissed();
+            }
+          });
+
+          document.addEventListener('click', function(ev){
+            var sel = window.getSelection();
+            if(sel && !sel.isCollapsed) return;
+            var el = ev.target;
+            while(el && el !== document.body && !el.hasAttribute('data-s')) el = el.parentElement;
+            if(!el || !el.hasAttribute('data-s')){
+              clearFocus();
+              if(window.Android) Android.onHighlightDismissed();
+              return;
+            }
+            var cls = el.className || '';
+            var m = cls.match(/hl-(\S+)/);
+            if(!m){
+              clearFocus();
+              if(window.Android) Android.onHighlightDismissed();
+              return;
+            }
+            var color = m[1];
+            var clickS = parseInt(el.getAttribute('data-s'));
+            var spans = document.querySelectorAll('[data-s]');
+            var hlStart = -1, hlEnd = -1;
+            for(var i=0;i<spans.length;i++){
+              var sp = spans[i];
+              if(sp.className.indexOf('hl-'+color) < 0) continue;
+              var s=parseInt(sp.getAttribute('data-s'));
+              var e=parseInt(sp.getAttribute('data-e'));
+              if(hlStart < 0){ hlStart=s; hlEnd=e; }
+              else if(s <= hlEnd){ if(e>hlEnd) hlEnd=e; }
+              else {
+                if(clickS >= hlStart && clickS < hlEnd) break;
+                hlStart=s; hlEnd=e;
+              }
+            }
+            if(clickS < hlStart || clickS >= hlEnd){ hlStart=clickS; hlEnd=parseInt(el.getAttribute('data-e')); }
+            clearFocus();
+            for(var i=0;i<spans.length;i++){
+              var sp = spans[i];
+              var s=parseInt(sp.getAttribute('data-s'));
+              if(s >= hlStart && s < hlEnd && sp.className.indexOf('hl-'+color) >= 0){
+                sp.classList.add('hl-focus');
+              }
+            }
+            if(window.Android && hlEnd > hlStart) Android.onHighlightTap(hlStart, hlEnd, color);
+          });
+        </script>
+    """.trimIndent()
+
+    /** Prevents vertical scrolling in vertical-rl mode (WebView scrolls despite CSS overflow). */
+    private val VERTICAL_SCROLL_LOCK_JS = """
+        <script>
+        (function(){
+          window.addEventListener('scroll', function(){
+            if(window.scrollY !== 0) window.scrollTo(window.scrollX, 0);
+          });
+        })();
         </script>
     """.trimIndent()
 

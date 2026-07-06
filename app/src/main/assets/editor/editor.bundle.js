@@ -28196,6 +28196,7 @@
   const HL_RE = /~=\{([^}]+)\}([\s\S]*?)=~/g;
   const BOLD_RE = /\*\*([^*]+)\*\*/g;
   const TAG_RE = /(^|\s)#([^\s#]+)/g;
+  const CLOZE_RE = /==((?:(?!==)[\s\S])+)==/g;
 
   function cssFor(name) {
     const c = PALETTE.find((p) => p.name === name);
@@ -28224,6 +28225,20 @@
   class HideWidget extends WidgetType {
     toDOM() {
       return document.createElement("span");
+    }
+  }
+
+  class BracketWidget extends WidgetType {
+    constructor(ch) {
+      super();
+      this.ch = ch;
+    }
+    eq(o) { return o.ch === this.ch; }
+    toDOM() {
+      const s = document.createElement("span");
+      s.className = "cloze-bracket";
+      s.textContent = this.ch;
+      return s;
     }
   }
 
@@ -28276,6 +28291,23 @@
               push(innerFrom, innerTo, Decoration.mark({
                 attributes: { style: `background:${cssFor(color)}33;border-bottom:2px solid ${cssFor(color)};` },
               }));
+              push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
+            }
+          }
+          CLOZE_RE.lastIndex = 0;
+          while ((m = CLOZE_RE.exec(text))) {
+            const from = m.index;
+            const to = from + m[0].length;
+            const innerFrom = from + 2;
+            const innerTo = to - 2;
+            const content = m[1];
+            if (touched(sel, from, to)) {
+              push(from, innerFrom, Decoration.replace({ widget: new BracketWidget("\uFF5F") }));
+              push(innerFrom, innerTo, Decoration.mark({ class: "cloze-revealed" }));
+              push(innerTo, to, Decoration.replace({ widget: new BracketWidget("\uFF60") }));
+            } else {
+              push(from, innerFrom, Decoration.replace({ widget: new HideWidget() }));
+              push(innerFrom, innerTo, Decoration.mark({ class: "cloze-hidden" }));
               push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
             }
           }
