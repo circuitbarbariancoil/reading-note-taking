@@ -7,6 +7,7 @@ package com.readingnotes.app.model
  * kanji / emoji (surrogate pairs) never cause off-by-one misalignment.
  */
 object CodePoints {
+    private val RUBY_READING = Regex("《[^》]*》")
 
     /** Number of Unicode code points in [s]. */
     fun length(s: String): Int = s.codePointCount(0, s.length)
@@ -17,6 +18,9 @@ object CodePoints {
         val to = s.offsetByCodePoints(from, end - start)
         return s.substring(from, to)
     }
+
+    /** Removes ruby readings (`《...》`) while keeping base text intact. */
+    fun stripRuby(s: String): String = s.replace(RUBY_READING, "")
 
     /** Convert a code-point offset to a UTF-16 char index into [s]. */
     fun toCharIndex(s: String, codePointOffset: Int): Int =

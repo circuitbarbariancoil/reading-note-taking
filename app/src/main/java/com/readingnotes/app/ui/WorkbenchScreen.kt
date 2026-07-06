@@ -246,7 +246,7 @@ fun WorkbenchScreen(
                     onHighlight = ::applyHighlight,
                     onExcerpt = ::applyExcerpt,
                     onSearch = {
-                        val text = page.ocrText?.let { CodePoints.substring(it, sel.start, sel.end) } ?: return@SelectionBar
+                        val text = page.ocrText?.let { CodePoints.substring(it, sel.start, sel.end) }?.let(CodePoints::stripRuby) ?: return@SelectionBar
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(text)))
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         context.startActivity(intent)
@@ -278,7 +278,7 @@ fun WorkbenchScreen(
                             { editingEntryId = linkedEntry.id; tappedHighlight = null }
                         } else null,
                         onSearch = {
-                            val text = page.ocrText?.let { CodePoints.substring(it, hl.start, hl.end) } ?: return@HighlightActionBar
+                            val text = page.ocrText?.let { CodePoints.substring(it, hl.start, hl.end) }?.let(CodePoints::stripRuby) ?: return@HighlightActionBar
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(text)))
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             context.startActivity(intent)
