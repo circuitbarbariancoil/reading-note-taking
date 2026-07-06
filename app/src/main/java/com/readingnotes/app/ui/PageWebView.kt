@@ -98,9 +98,10 @@ fun PageWebView(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                settings.javaScriptEnabled = interactive
+                settings.javaScriptEnabled = true
                 settings.useWideViewPort = true
                 settings.loadWithOverviewMode = true
+                if (vertical) isVerticalScrollBarEnabled = false
                 if (interactive) {
                     val bridge = SelectionBridge { currentOnSelection.value(it) }
                     addJavascriptInterface(bridge, "Android")
