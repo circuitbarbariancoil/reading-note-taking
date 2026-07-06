@@ -194,9 +194,8 @@ fun EntryEditor(
                     ) { js("window.RN && RN.wrap(${JSONObject.quote("~={${hc.name}}")}, ${JSONObject.quote("=~")});") }
                 }
             }
-            ToolbarChip("《》") { js("window.RN && RN.wrap('\\u300A', '\\u300B');") }
             ToolbarChip("B", bold = true) { js("window.RN && RN.wrap('**', '**');") }
-            ToolbarChip("穴") { js("window.RN && RN.wrap('==', '==');") }
+            ToolbarChip("｟｠") { js("window.RN && RN.wrap('==', '==');") }
             ToolbarChip("#") { js("window.RN && RN.insertTag();") }
         }
     }

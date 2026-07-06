@@ -28228,20 +28228,6 @@
     }
   }
 
-  class ClozeWidget extends WidgetType {
-    constructor(content) {
-      super();
-      this.content = content;
-    }
-    eq(o) { return o.content === this.content; }
-    toDOM() {
-      const s = document.createElement("span");
-      s.className = "cloze-block";
-      s.textContent = "\u00A0".repeat(Math.max(this.content.length, 2));
-      return s;
-    }
-  }
-
   class BracketWidget extends WidgetType {
     constructor(ch) {
       super();
@@ -28320,7 +28306,9 @@
               push(innerFrom, innerTo, Decoration.mark({ class: "cloze-revealed" }));
               push(innerTo, to, Decoration.replace({ widget: new BracketWidget("\uFF60") }));
             } else {
-              push(from, to, Decoration.replace({ widget: new ClozeWidget(content) }));
+              push(from, innerFrom, Decoration.replace({ widget: new HideWidget() }));
+              push(innerFrom, innerTo, Decoration.mark({ class: "cloze-hidden" }));
+              push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
             }
           }
 
