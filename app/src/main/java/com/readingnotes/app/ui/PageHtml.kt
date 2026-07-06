@@ -56,8 +56,7 @@ object PageHtml {
               ::selection{background:#3C546840;}
               .flash{animation:flashfade 1.8s ease-out forwards;}
               @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
-              .hl-focus{outline:2px solid #3C5468;outline-offset:1px;border-radius:2px;animation:focuspulse 0.4s ease-out;}
-              @keyframes focuspulse{0%{outline-width:4px;outline-offset:3px;}100%{outline-width:2px;outline-offset:1px;}}
+              .hl-focus{filter:brightness(0.88) saturate(1.4);transition:filter 0.15s ease-out;}
               $swatches
             </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
         """.trimIndent()

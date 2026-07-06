@@ -591,7 +591,6 @@ private fun HighlightActionBar(
             }
             Text("搜索", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onSearch))
             Text("删除", fontSize = 14.sp, color = Color(0xFFB3524A), modifier = Modifier.clickable(onClick = onDelete))
-            Text("✕", fontSize = 14.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDismiss))
         }
     }
 }
