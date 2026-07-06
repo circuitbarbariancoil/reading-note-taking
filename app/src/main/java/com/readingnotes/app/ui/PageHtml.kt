@@ -55,8 +55,8 @@ object PageHtml {
               }
               rt{font-size:.5em;}
               ::selection{background:#3C546840;}
-              .flash{animation:flashfade 1.8s ease-out forwards;}
-              @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
+              .flash{animation:flashfade 1.8s ease-out;}
+              @keyframes flashfade{0%,40%{box-shadow:inset 0 0 0 100px #3C546855;}100%{box-shadow:inset 0 0 0 100px transparent;}}
               .hl-focus{transition:background 0.15s ease-out;}
               $swatches
             </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
