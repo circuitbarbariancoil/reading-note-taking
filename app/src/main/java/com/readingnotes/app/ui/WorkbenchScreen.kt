@@ -187,14 +187,18 @@ fun WorkbenchScreen(
                         colors = colors,
                         vertical = vertical,
                         interactive = true,
-                        onSelectionChange = { selection = it },
+                        onSelectionChange = { sel -> selection = sel; if (sel != null) tappedHighlight = null },
                         modifier = Modifier.fillMaxSize(),
                         flash = focusRange.takeIf { pageIndex == initialPageIndex },
                         onHighlightTap = { tap ->
-                            val hl = page.highlights.firstOrNull { h ->
-                                h.color == tap.color && tap.start >= h.start && tap.start < h.end
+                            if (tap == null) {
+                                tappedHighlight = null
+                            } else {
+                                val hl = page.highlights.firstOrNull { h ->
+                                    h.color == tap.color && tap.start >= h.start && tap.start < h.end
+                                }
+                                if (hl != null) tappedHighlight = tap
                             }
-                            if (hl != null) tappedHighlight = tap
                         },
                     )
                     else -> PageImage(

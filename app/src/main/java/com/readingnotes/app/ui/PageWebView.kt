@@ -83,7 +83,7 @@ private class EmptyActionModeCallback(
 
 private class SelectionBridge(
     val onSelection: (Selection?) -> Unit,
-    val onHighlightTap: (HighlightTap) -> Unit = {},
+    val onHighlightTap: (HighlightTap?) -> Unit = {},
 ) {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -101,6 +101,11 @@ private class SelectionBridge(
     fun onHighlightTap(start: Int, end: Int, color: String) {
         main.post { onHighlightTap(HighlightTap(start, end, color)) }
     }
+
+    @JavascriptInterface
+    fun onHighlightDismissed() {
+        main.post { onHighlightTap(null as HighlightTap?) }
+    }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -113,7 +118,7 @@ fun PageWebView(
     onSelectionChange: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
     flash: IntRange? = null,
-    onHighlightTap: (HighlightTap) -> Unit = {},
+    onHighlightTap: (HighlightTap?) -> Unit = {},
 ) {
     val currentOnSelection = rememberUpdatedState(onSelectionChange)
     val currentOnHighlightTap = rememberUpdatedState(onHighlightTap)

@@ -56,6 +56,8 @@ object PageHtml {
               ::selection{background:#3C546840;}
               .flash{animation:flashfade 1.8s ease-out forwards;}
               @keyframes flashfade{0%,40%{background:#3C546855;}100%{background:transparent;}}
+              .hl-focus{outline:2px solid #3C5468;outline-offset:1px;border-radius:2px;animation:focuspulse 0.4s ease-out;}
+              @keyframes focuspulse{0%{outline-width:4px;outline-offset:3px;}100%{outline-width:2px;outline-offset:1px;}}
               $swatches
             </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
         """.trimIndent()
@@ -193,37 +195,60 @@ object PageHtml {
           }
           document.addEventListener('selectionchange', function(){ setTimeout(reportSelection, 30); });
 
+          function clearFocus(){
+            var focused = document.querySelectorAll('.hl-focus');
+            for(var i=0;i<focused.length;i++) focused[i].classList.remove('hl-focus');
+          }
+
+          document.addEventListener('selectionchange', function(){
+            var sel = window.getSelection();
+            if(sel && !sel.isCollapsed) {
+              clearFocus();
+              if(window.Android) Android.onHighlightDismissed();
+            }
+          });
+
           document.addEventListener('click', function(ev){
             var sel = window.getSelection();
             if(sel && !sel.isCollapsed) return;
             var el = ev.target;
-            while(el && !el.hasAttribute('data-s')) el = el.parentElement;
-            if(!el) return;
+            while(el && el !== document.body && !el.hasAttribute('data-s')) el = el.parentElement;
+            if(!el || !el.hasAttribute('data-s')){
+              clearFocus();
+              if(window.Android) Android.onHighlightDismissed();
+              return;
+            }
             var cls = el.className || '';
             var m = cls.match(/hl-(\S+)/);
-            if(!m) return;
+            if(!m){
+              clearFocus();
+              if(window.Android) Android.onHighlightDismissed();
+              return;
+            }
             var color = m[1];
-            var hlStart = Infinity, hlEnd = -1;
+            var clickS = parseInt(el.getAttribute('data-s'));
             var spans = document.querySelectorAll('[data-s]');
+            var hlStart = -1, hlEnd = -1;
             for(var i=0;i<spans.length;i++){
-              if(spans[i].className.indexOf('hl-'+color) >= 0){
-                var s=parseInt(spans[i].getAttribute('data-s'));
-                var e=parseInt(spans[i].getAttribute('data-e'));
-                var adjacent = (s === hlEnd || s <= hlEnd);
-                if(hlStart === Infinity || adjacent){
-                  if(s<hlStart) hlStart=s;
-                  if(e>hlEnd) hlEnd=e;
-                } else {
-                  var clickS = parseInt(el.getAttribute('data-s'));
-                  if(clickS >= hlStart && clickS < hlEnd) break;
-                  hlStart=s; hlEnd=e;
-                }
+              var sp = spans[i];
+              if(sp.className.indexOf('hl-'+color) < 0) continue;
+              var s=parseInt(sp.getAttribute('data-s'));
+              var e=parseInt(sp.getAttribute('data-e'));
+              if(hlStart < 0){ hlStart=s; hlEnd=e; }
+              else if(s <= hlEnd){ if(e>hlEnd) hlEnd=e; }
+              else {
+                if(clickS >= hlStart && clickS < hlEnd) break;
+                hlStart=s; hlEnd=e;
               }
             }
-            var clickS = parseInt(el.getAttribute('data-s'));
-            if(clickS < hlStart || clickS >= hlEnd){
-              hlStart = clickS;
-              hlEnd = parseInt(el.getAttribute('data-e'));
+            if(clickS < hlStart || clickS >= hlEnd){ hlStart=clickS; hlEnd=parseInt(el.getAttribute('data-e')); }
+            clearFocus();
+            for(var i=0;i<spans.length;i++){
+              var sp = spans[i];
+              var s=parseInt(sp.getAttribute('data-s'));
+              if(s >= hlStart && s < hlEnd && sp.className.indexOf('hl-'+color) >= 0){
+                sp.classList.add('hl-focus');
+              }
             }
             if(window.Android && hlEnd > hlStart) Android.onHighlightTap(hlStart, hlEnd, color);
           });
