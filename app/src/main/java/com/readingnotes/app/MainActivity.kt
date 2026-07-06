@@ -20,8 +20,6 @@ import com.dropbox.core.oauth.DbxCredential
 import com.readingnotes.app.dropbox.DropboxConfig
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
-import com.readingnotes.app.model.Entry
-import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.settings.SettingsStore
@@ -40,7 +38,6 @@ import com.readingnotes.app.ui.SettingsScreen
 import com.readingnotes.app.ui.WorkbenchScreen
 import com.readingnotes.app.ui.theme.ReadingNotesTheme
 import java.io.File
-import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -294,58 +291,42 @@ class MainActivity : ComponentActivity() {
                 val notebook = viewModel.notebookBook
                 val entries = notebook?.entries.orEmpty()
 
-                // If we have pending share text, create entry and open editor
-                val pendingText = viewModel.pendingShareText
-                if (pendingText != null) {
-                    viewModel.pendingShareText = null
-                    val newEntry = Entry(
-                        id = UUID.randomUUID().toString().take(8),
-                        page = null,
-                        text = pendingText,
-                        kind = EntryKind.note,
-                        createdAt = java.time.Instant.now().toString(),
-                        updatedAt = java.time.Instant.now().toString(),
-                    )
-                    viewModel.activeBook = notebook
-                    viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", newEntry.id)
-                    // Save the new entry first, then open editor
-                    viewModel.saveNewNoteEntry(newEntry)
-                } else {
-                    NotebookScreen(
-                        entries = entries,
-                        onBack = {
-                            viewModel.onEnterBookShelf()
-                            viewModel.currentScreen = ShellScreen.BookShelf
-                        },
-                        onNewEntry = {
-                            val now = java.time.Instant.now().toString()
-                            val newEntry = Entry(
-                                id = UUID.randomUUID().toString().take(8),
-                                page = null,
-                                text = "",
-                                kind = EntryKind.note,
-                                createdAt = now,
-                                updatedAt = now,
-                            )
-                            viewModel.activeBook = notebook
-                            viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", newEntry.id)
-                            viewModel.saveNewNoteEntry(newEntry)
-                        },
-                        onEntryClick = { entry ->
-                            viewModel.activeBook = notebook
-                            viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", entry.id)
-                            viewModel.entryEditorFromBrowser = false
-                            viewModel.currentScreen = ShellScreen.EntryEditor
-                        },
-                        onDeleteEntry = { entry -> viewModel.deleteNoteEntry(entry) },
-                    )
-                }
+                NotebookScreen(
+                    entries = entries,
+                    colors = viewModel.appSettings.palette.colors,
+                    onBack = {
+                        viewModel.onEnterBookShelf()
+                        viewModel.currentScreen = ShellScreen.BookShelf
+                    },
+                    onNewEntry = { viewModel.openNotebookDraft() },
+                    onEntryClick = { entry ->
+                        viewModel.activeBook = notebook
+                        viewModel.entryEditTarget = EntryEditTarget(notebook?.uid ?: "", entry.id)
+                        viewModel.entryEditorFromBrowser = false
+                        viewModel.currentScreen = ShellScreen.EntryEditor
+                    },
+                    onDeleteEntries = { ids -> viewModel.deleteNoteEntries(ids) },
+                )
             }
 
             ShellScreen.EntryEditor -> {
+                val draft = viewModel.notebookDraft
                 val book = viewModel.activeBook
                 val target = viewModel.entryEditTarget
-                if (book == null || target == null) {
+                if (draft != null) {
+                    // New (unsaved) notebook note: created only on save.
+                    val notebook = viewModel.notebookBook
+                    EntryEditor(
+                        entry = draft,
+                        palette = viewModel.appSettings.palette,
+                        knownTags = notebook?.entries.orEmpty().flatMap { it.tags }.distinct().sorted(),
+                        onSave = { updated -> viewModel.saveNewNoteEntry(updated) },
+                        onDismiss = {
+                            viewModel.notebookDraft = null
+                            viewModel.currentScreen = ShellScreen.Notebook
+                        },
+                    )
+                } else if (book == null || target == null) {
                     viewModel.currentScreen = ShellScreen.BookShelf
                 } else {
                     val entry = book.entries.firstOrNull { it.id == target.entryId }

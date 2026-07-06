@@ -19,6 +19,7 @@ import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Capture
 import com.readingnotes.app.model.CodePoints
 import com.readingnotes.app.model.Entry
+import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.model.MarkupText
 import com.readingnotes.app.model.Page
@@ -87,7 +88,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val ocrStatus = mutableStateMapOf<String, OcrJobState>()
     val processQueue = mutableStateListOf<ProcessItem>()
     var notebookBook by mutableStateOf<Book?>(null)
-    var pendingShareText by mutableStateOf<String?>(null)
+    var notebookDraft by mutableStateOf<Entry?>(null)
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -630,14 +631,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Handle shared text: save silently or open editor. */
+    /** Handle shared text: save silently or open the editor with a draft. */
     fun handleShareText(text: String, openEditor: Boolean) {
         if (openEditor) {
-            pendingShareText = text
-            openNotebook()
+            openNotebookDraft(text)
         } else {
             addNoteToNotebook(text)
         }
+    }
+
+    /** Open the entry editor with an unsaved draft; the note is created on save. */
+    fun openNotebookDraft(text: String = "") {
+        notebookBook = bookRepository.getOrCreateNotebook()
+        val now = java.time.Instant.now().toString()
+        notebookDraft = Entry(
+            id = java.util.UUID.randomUUID().toString().take(8),
+            page = null,
+            text = text,
+            kind = EntryKind.note,
+            createdAt = now,
+            updatedAt = now,
+        )
+        currentScreen = ShellScreen.EntryEditor
     }
 
     fun saveNewNoteEntry(entry: Entry) {
@@ -649,6 +664,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
             val persisted = bookRepository.persist(updated, appSettings.dropboxCredentialJson)
             notebookBook = persisted
+            notebookDraft = null
             entryEditTarget = null
             currentScreen = ShellScreen.Notebook
             refreshBooks()
@@ -668,11 +684,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteNoteEntry(entry: Entry) {
+    fun deleteNoteEntries(ids: List<String>) {
         val notebook = notebookBook ?: return
         viewModelScope.launch {
             val updated = notebook.copy(
-                entries = notebook.entries.filterNot { it.id == entry.id },
+                entries = notebook.entries.filterNot { it.id in ids },
                 updatedAt = java.time.Instant.now().toString(),
             )
             notebookBook = bookRepository.persist(updated, appSettings.dropboxCredentialJson)
