@@ -29,6 +29,24 @@ private class SelectionWebView : WebView {
     constructor(context: Context) : super(context)
     constructor(context: Context, attrs: AttributeSet?) : super(context, attrs)
 
+    /** When true (vertical/tategaki mode), vertical scrolling is clamped to 0. */
+    var lockVerticalScroll = false
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        if (lockVerticalScroll && t != 0) scrollTo(l, 0)
+    }
+
+    override fun overScrollBy(
+        deltaX: Int, deltaY: Int, scrollX: Int, scrollY: Int,
+        scrollRangeX: Int, scrollRangeY: Int, maxOverScrollX: Int, maxOverScrollY: Int,
+        isTouchEvent: Boolean,
+    ): Boolean = super.overScrollBy(
+        deltaX, if (lockVerticalScroll) 0 else deltaY, scrollX, if (lockVerticalScroll) 0 else scrollY,
+        scrollRangeX, scrollRangeY, maxOverScrollX, if (lockVerticalScroll) 0 else maxOverScrollY,
+        isTouchEvent,
+    )
+
     // Keep the action mode alive (so the selection isn't immediately cleared)
     // but strip every menu item, hiding the native copy/paste bar. Returning
     // null here would make Android drop the selection right away.
@@ -101,10 +119,7 @@ fun PageWebView(
                 settings.javaScriptEnabled = true
                 settings.useWideViewPort = true
                 settings.loadWithOverviewMode = true
-                if (vertical) {
-                    isVerticalScrollBarEnabled = false
-                    overScrollMode = android.view.View.OVER_SCROLL_NEVER
-                }
+
                 if (interactive) {
                     val bridge = SelectionBridge { currentOnSelection.value(it) }
                     addJavascriptInterface(bridge, "Android")
@@ -112,6 +127,8 @@ fun PageWebView(
             }
         },
         update = { web ->
+            web.lockVerticalScroll = vertical
+            web.isVerticalScrollBarEnabled = !vertical
             // Structural key: everything that requires a full HTML reload.
             // Highlights are NOT included — they update via JS to preserve scroll.
             val contentKey = "${page.page}|${page.ocrText?.hashCode()}|$vertical|$interactive|$flash"
