@@ -144,6 +144,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reloadSettings()
     }
 
+    private fun patchBooks(updatedBooks: Collection<Book>) {
+        if (updatedBooks.isEmpty()) return
+        val updatedByUid = updatedBooks.associateBy { it.uid }
+        val existing = books
+        val replaced = existing.map { updatedByUid[it.uid] ?: it }
+        val missing = updatedBooks.filter { updated -> existing.none { it.uid == updated.uid } }
+        books = if (missing.isEmpty()) replaced else replaced + missing
+    }
+
     fun saveEditedEntry(updated: Entry) {
         val book = activeBook ?: return
         val fromBrowser = entryEditorFromBrowser
@@ -154,9 +163,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         entryEditTarget = null
         entryEditorFromBrowser = false
         currentScreen = if (fromBrowser) ShellScreen.EntryBrowser else ShellScreen.Workbench
+        patchBooks(listOf(updatedBook))
         viewModelScope.launch {
             bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
-            refreshBooks()
         }
     }
 
@@ -673,9 +682,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         entryEditTarget = null
         entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
         currentScreen = ShellScreen.EntryBrowser
+        patchBooks(listOf(updated))
         viewModelScope.launch {
             bookRepository.persist(updated, appSettings.dropboxCredentialJson)
-            refreshBooks()
         }
     }
 
@@ -688,31 +697,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         entryEditTarget = null
         entryBrowserBookUid = com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID
         currentScreen = ShellScreen.EntryBrowser
+        patchBooks(listOf(updatedBook))
         viewModelScope.launch {
             bookRepository.persist(updatedBook, appSettings.dropboxCredentialJson)
-            refreshBooks()
         }
     }
 
     /** Delete entries from any book(s). Grouped by bookUid for efficiency. */
     fun deleteEntries(items: List<com.readingnotes.app.ui.BrowsableEntry>) {
-        // Update UI state immediately (optimistic)
         val idsByBook = items.groupBy({ it.bookUid }) { it.entry.id }
-        idsByBook.forEach { (uid, ids) ->
+        val now = java.time.Instant.now().toString()
+        val idSetsByBook = idsByBook.mapValues { (_, ids) -> ids.toSet() }
+        val updatedBooks = books.mapNotNull { book ->
+            val idSet = idSetsByBook[book.uid] ?: return@mapNotNull null
+            book.copy(
+                entries = book.entries.filterNot { it.id in idSet },
+                updatedAt = now,
+            )
+        }.toMutableList()
+        idsByBook[com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID]?.let { ids ->
             val idSet = ids.toSet()
-            if (uid == com.readingnotes.app.repository.BookRepository.NOTEBOOK_UID) {
-                notebookBook = notebookBook?.copy(
-                    entries = notebookBook?.entries.orEmpty().filterNot { it.id in idSet },
-                    updatedAt = java.time.Instant.now().toString(),
-                )
-            }
-            if (uid == activeBook?.uid) {
-                activeBook = activeBook?.copy(
-                    entries = activeBook?.entries.orEmpty().filterNot { it.id in idSet },
-                    updatedAt = java.time.Instant.now().toString(),
-                )
+            notebookBook = notebookBook?.copy(
+                entries = notebookBook?.entries.orEmpty().filterNot { it.id in idSet },
+                updatedAt = now,
+            )?.also { updatedBook ->
+                if (updatedBooks.none { it.uid == updatedBook.uid }) updatedBooks.add(updatedBook)
             }
         }
+        activeBook?.uid?.let { uid ->
+            idsByBook[uid]?.let { ids ->
+                val idSet = ids.toSet()
+                activeBook = activeBook?.copy(
+                    entries = activeBook?.entries.orEmpty().filterNot { it.id in idSet },
+                    updatedAt = now,
+                )?.also { updatedBook ->
+                    if (updatedBooks.none { it.uid == updatedBook.uid }) updatedBooks.add(updatedBook)
+                }
+            }
+        }
+        patchBooks(updatedBooks)
         // Persist in background
         viewModelScope.launch {
             idsByBook.forEach { (uid, ids) ->
@@ -724,7 +747,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 bookRepository.persist(updated, appSettings.dropboxCredentialJson)
             }
-            refreshBooks()
         }
     }
 
