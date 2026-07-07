@@ -173,8 +173,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onCapture = { viewModel.openCapture(fromWorkbench = false) },
                         onImportPdf = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
-                        onBatchOcr = { viewModel.batchOcr() },
-                        onBatchOcrPages = { viewModel.batchOcrPages() },
+                        onBatchOcr = { viewModel.batchOcrAll() },
                         onBack = {
                             viewModel.onEnterBookShelf()
                             viewModel.currentScreen = ShellScreen.BookShelf

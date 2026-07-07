@@ -67,6 +67,12 @@ data class EntryEditTarget(val bookUid: String, val entryId: String)
 
 private data class OcrFailureKey(val bookUid: String, val pageNumber: Int)
 
+/** A unit of pending OCR work for the unified batch OCR queue. */
+private sealed interface OcrWork {
+    data class Pg(val page: Page) : OcrWork
+    data class Cap(val capture: Capture) : OcrWork
+}
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsStore = SettingsStore(app)
     val bookRepository = BookRepository(app)
@@ -248,7 +254,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Import a contiguous range of PDF pages (1-based, inclusive) as numbered
      * Pages without OCR. Each page is rendered at archive resolution, stored as
      * the page's archive image, and assigned [startPageNumber] + offset. Runs OCR
-     * later via [batchOcrPages]. Reuses the processing queue for progress.
+     * later via [batchOcrAll]. Reuses the processing queue for progress.
      */
     fun importPdf(uri: Uri, fromPage: Int, toPage: Int, startPageNumber: Int) {
         val book = activeBook ?: return
@@ -430,56 +436,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun batchOcr() {
-        queueCollapsed = false
-        if (isMonthlyApiBudgetExceeded()) {
-            showMonthlyApiBudgetError()
-            return
-        }
-        startNewBatchIfIdle()
-        val config = appSettings.providerConfig
-        val usable = config.usableProviders
-        val parallel = config.parallelOcr && usable.size > 1
-
-        viewModelScope.launch {
-            val pendingCaptures = activeBook?.captures?.filter { it.ocrText == null }.orEmpty()
-            pendingCaptures.forEach { capture -> upsertProcessItem(processQueue, capture.id, ProcessStep.Queued) }
-
-            if (parallel) {
-                val channel = kotlinx.coroutines.channels.Channel<Capture>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-                for (capture in pendingCaptures) channel.send(capture)
-                channel.close()
-                coroutineScope {
-                    val workers = usable.map { provider ->
-                        async {
-                            for (capture in channel) {
-                                if (isMonthlyApiBudgetExceeded()) {
-                                    showMonthlyApiBudgetError()
-                                    break
-                                }
-                                runOcrCapture(capture, jumpToPage = false, assignedProvider = provider)
-                            }
-                        }
-                    }
-                    workers.awaitAll()
-                }
-                activeBook?.uid?.let { uid ->
-                    activeBook = bookRepository.loadBook(uid) ?: activeBook
-                }
-            } else {
-                for (capture in pendingCaptures) {
-                    if (isMonthlyApiBudgetExceeded()) {
-                        showMonthlyApiBudgetError()
-                        break
-                    }
-                    runOcrCapture(capture, jumpToPage = false)
-                }
-            }
-        }
-    }
-
-    /** Batch-OCR every imported/numbered page that has no OCR text yet. */
-    fun batchOcrPages() {
+    /**
+     * Batch-OCR everything not yet recognized: imported/numbered pages that
+     * have no OCR text (processed first, since they're one step from done),
+     * then captures that still lack a page number. One button, one queue.
+     */
+    fun batchOcrAll() {
         queueCollapsed = false
         if (isMonthlyApiBudgetExceeded()) {
             showMonthlyApiBudgetError()
@@ -495,24 +457,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val parallel = config.parallelOcr && usable.size > 1
 
         viewModelScope.launch {
-            val pending = activeBook?.pages
+            val book = activeBook
+            val pendingPages = book?.pages
                 ?.filter { it.ocrText.isNullOrBlank() && it.archiveImage != null }
+                ?.sortedBy { it.page }
                 .orEmpty()
-            pending.forEach { page -> upsertProcessItem(processQueue, "page-${page.page}", ProcessStep.Queued) }
+            val pendingCaptures = book?.captures?.filter { it.ocrText == null }.orEmpty()
+            pendingPages.forEach { page -> upsertProcessItem(processQueue, "page-${page.page}", ProcessStep.Queued) }
+            pendingCaptures.forEach { capture -> upsertProcessItem(processQueue, capture.id, ProcessStep.Queued) }
+            val work: List<OcrWork> = pendingPages.map { OcrWork.Pg(it) } + pendingCaptures.map { OcrWork.Cap(it) }
 
             if (parallel) {
-                val channel = kotlinx.coroutines.channels.Channel<Page>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-                for (page in pending) channel.send(page)
+                val channel = kotlinx.coroutines.channels.Channel<OcrWork>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                for (item in work) channel.send(item)
                 channel.close()
                 coroutineScope {
                     val workers = usable.map { provider ->
                         async {
-                            for (page in channel) {
+                            for (item in channel) {
                                 if (isMonthlyApiBudgetExceeded()) {
                                     showMonthlyApiBudgetError()
                                     break
                                 }
-                                runOcrPage(page, provider)
+                                when (item) {
+                                    is OcrWork.Pg -> runOcrPage(item.page, provider)
+                                    is OcrWork.Cap -> runOcrCapture(item.capture, jumpToPage = false, assignedProvider = provider)
+                                }
                             }
                         }
                     }
@@ -522,12 +492,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     activeBook = bookRepository.loadBook(uid) ?: activeBook
                 }
             } else {
-                for (page in pending) {
+                for (item in work) {
                     if (isMonthlyApiBudgetExceeded()) {
                         showMonthlyApiBudgetError()
                         break
                     }
-                    runOcrPage(page, null)
+                    when (item) {
+                        is OcrWork.Pg -> runOcrPage(item.page, null)
+                        is OcrWork.Cap -> runOcrCapture(item.capture, jumpToPage = false)
+                    }
                 }
             }
         }

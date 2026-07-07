@@ -80,7 +80,6 @@ fun PageListScreen(
     onCapture: () -> Unit,
     onImportPdf: () -> Unit,
     onBatchOcr: () -> Unit,
-    onBatchOcrPages: () -> Unit,
     onBack: () -> Unit,
     onOcrCapture: (Capture) -> Unit,
     processItems: List<ProcessItem> = emptyList(),
@@ -107,11 +106,17 @@ fun PageListScreen(
         if (id in selectedItems) selectedItems.remove(id) else selectedItems.add(id)
     }
 
-    val sortedPages = remember(book.pages, sortMode) {
+    // "已处理" = pages that have been OCR'd (recognized text + page number).
+    val ocredPages = remember(book.pages, sortMode) {
+        val filtered = book.pages.filter { !it.ocrText.isNullOrBlank() }
         when (sortMode) {
-            PageSortMode.ByOrder -> book.pages.sortedBy { it.addedAt }
-            PageSortMode.ByPageNumber -> book.pages.sortedBy { it.page }
+            PageSortMode.ByOrder -> filtered.sortedBy { it.addedAt }
+            PageSortMode.ByPageNumber -> filtered.sortedBy { it.page }
         }
+    }
+    // "未处理" front tier: numbered pages still awaiting OCR (e.g. PDF imports).
+    val unOcredPages = remember(book.pages) {
+        book.pages.filter { it.ocrText.isNullOrBlank() && it.archiveImage != null }.sortedBy { it.page }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Paper)) {
@@ -208,30 +213,12 @@ fun PageListScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Processed pages section
-                if (sortedPages.isNotEmpty()) {
-                    val unOcredPages = book.pages.count { it.ocrText.isNullOrBlank() && it.archiveImage != null }
+                // 已处理 = pages already OCR'd (recognized text + page number).
+                if (ocredPages.isNotEmpty()) {
                     item(span = { GridItemSpan(3) }) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("已处理", fontSize = 12.sp, color = SumiSoft)
-                            Spacer(Modifier.weight(1f))
-                            if (unOcredPages > 0) {
-                                Text(
-                                    "OCR 未识别页 ($unOcredPages)",
-                                    fontSize = 12.sp,
-                                    color = Accent,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable(onClick = onBatchOcrPages)
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                )
-                            }
-                        }
+                        Text("已处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
                     }
-                    itemsIndexed(sortedPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
+                    itemsIndexed(ocredPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
                         val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
                         val selected = itemId in selectedItems
                         PageThumbnail(
@@ -245,9 +232,12 @@ fun PageListScreen(
                     }
                 }
 
-                // Unprocessed captures section
-                if (book.captures.isNotEmpty()) {
-                    val runningCount = book.captures.count { ocrStatus[it.id] == OcrJobState.Running }
+                // 未处理 = everything not yet OCR'd: numbered pages awaiting OCR
+                // (front, one step from done) then captures without page numbers.
+                if (unOcredPages.isNotEmpty() || book.captures.isNotEmpty()) {
+                    val runningCount = unOcredPages.count { ocrStatus["page-${it.page}"] == OcrJobState.Running } +
+                        book.captures.count { ocrStatus[it.id] == OcrJobState.Running }
+                    val pendingCount = unOcredPages.size + book.captures.size
                     item(span = { GridItemSpan(3) }) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -262,7 +252,7 @@ fun PageListScreen(
                                     color = Accent,
                                 )
                                 Text(
-                                    "OCR 中 剩 ${book.captures.size} 张",
+                                    "OCR 中 剩 $pendingCount 项",
                                     fontSize = 12.sp,
                                     color = Accent,
                                     modifier = Modifier.padding(start = 6.dp, end = 4.dp),
@@ -279,6 +269,18 @@ fun PageListScreen(
                                 )
                             }
                         }
+                    }
+                    itemsIndexed(unOcredPages, key = { index, page -> "unpage-$index-${page.page}-${page.addedAt}" }) { _, page ->
+                        val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
+                        val selected = itemId in selectedItems
+                        PageThumbnail(
+                            page, book, repository,
+                            selected = selected,
+                            onClick = {
+                                if (selectMode) toggleSelect(itemId) else onOpenPage(page)
+                            },
+                            onLongClick = { toggleSelect(itemId) },
+                        )
                     }
                     items(book.captures, key = { "cap-${it.id}" }) { capture ->
                         val itemId = PageListItemId.UnprocessedCapture(capture.id)
