@@ -75,25 +75,37 @@ object Entries {
         return highlight to entry
     }
 
-    /** Manual excerpt -> entry with the exact selection, no expansion, no markup. */
+    /**
+     * Manual excerpt -> entry with the exact selection, no expansion, no markup,
+     * plus a neutral gray [PageHighlight] (color [PageHighlight.EXCERPT_COLOR]) so
+     * the excerpt also leaves a visible mark on the frozen OCR text.
+     */
     fun excerptEntry(
         page: Page,
         selStart: Int,
         selEnd: Int,
         now: String,
-    ): Entry? {
+    ): Pair<PageHighlight, Entry>? {
         val ocrText = page.ocrText ?: return null
         val text = CodePoints.substring(ocrText, selStart, selEnd)
-        return Entry(
+        val highlight = PageHighlight(
+            id = newId(),
+            start = selStart,
+            end = selEnd,
+            color = PageHighlight.EXCERPT_COLOR,
+        )
+        val entry = Entry(
             id = newId(),
             page = page.page,
             srcStart = selStart,
             srcEnd = selEnd,
             text = text,
             kind = EntryKind.excerpt,
+            highlightId = highlight.id,
             createdAt = now,
             updatedAt = now,
         )
+        return highlight to entry
     }
 
     private fun insertMarkup(text: String, start: Int, end: Int, color: String): String {

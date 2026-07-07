@@ -118,11 +118,12 @@ fun PageWebView(
     onSelectionChange: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
     flash: IntRange? = null,
+    flashExcerpt: Boolean = false,
     onHighlightTap: (HighlightTap?) -> Unit = {},
 ) {
     val currentOnSelection = rememberUpdatedState(onSelectionChange)
     val currentOnHighlightTap = rememberUpdatedState(onHighlightTap)
-    val html = PageHtml.render(page, colors, vertical, interactive = interactive, flash = flash)
+    val html = PageHtml.render(page, colors, vertical, interactive = interactive, flash = flash, flashExcerpt = flashExcerpt)
 
     AndroidView(
         modifier = modifier,
@@ -150,7 +151,7 @@ fun PageWebView(
             web.isVerticalScrollBarEnabled = !vertical
             // Structural key: everything that requires a full HTML reload.
             // Highlights are NOT included — they update via JS to preserve scroll.
-            val contentKey = "${page.page}|${page.ocrText?.hashCode()}|$vertical|$interactive|$flash"
+            val contentKey = "${page.page}|${page.ocrText?.hashCode()}|$vertical|$interactive|$flash|$flashExcerpt"
             val prev = web.tag as? WebViewState
 
             if (prev == null || prev.contentKey != contentKey) {

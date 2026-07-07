@@ -2,6 +2,7 @@ package com.readingnotes.app
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -23,9 +24,14 @@ import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.model.MarkupText
 import com.readingnotes.app.model.Page
+import com.readingnotes.app.model.Section
 import com.readingnotes.app.ocr.LlmProvider
+import com.readingnotes.app.ocr.OcrDispatcher
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.ocr.ProviderConfig
+import com.readingnotes.app.ocr.TocItem
+import com.readingnotes.app.image.ImageProcessing
+import com.readingnotes.app.pdf.PdfSource
 import com.readingnotes.app.repository.BookRepository
 import com.readingnotes.app.repository.DuplicatePageNumberException
 import com.readingnotes.app.repository.ProcessOutcome
@@ -54,6 +60,10 @@ enum class ShellScreen {
     Palette,
     EntryBrowser,
     EntryEditor,
+    PdfImport,
+    Toc,
+    TocEditor,
+    TocCapture,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -62,6 +72,12 @@ data class PendingPageNumber(val capture: Capture, val ocrText: String)
 data class EntryEditTarget(val bookUid: String, val entryId: String)
 
 private data class OcrFailureKey(val bookUid: String, val pageNumber: Int)
+
+/** A unit of pending OCR work for the unified batch OCR queue. */
+private sealed interface OcrWork {
+    data class Pg(val page: Page) : OcrWork
+    data class Cap(val capture: Capture) : OcrWork
+}
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsStore = SettingsStore(app)
@@ -77,9 +93,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var entryEditTarget by mutableStateOf<EntryEditTarget?>(null)
     var entryEditorFromBrowser by mutableStateOf(false)
     var workbenchFocus by mutableStateOf<IntRange?>(null)
+    /** True when [workbenchFocus] targets a plain excerpt (gray-underline jump, no block). */
+    var workbenchFocusIsExcerpt by mutableStateOf(false)
     var ocrErrorMessage by mutableStateOf<String?>(null)
     var entryBrowserBookUid by mutableStateOf<String?>(null)
     var captureFromWorkbench = false
+    var pdfImportUri by mutableStateOf<Uri?>(null)
     var captureShotCount by mutableStateOf(0)
     var captureSaving by mutableStateOf(false)
     var syncPendingCount by mutableStateOf(0)
@@ -93,6 +112,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var notebookDraft by mutableStateOf<Entry?>(null)
     var entryBrowserOrigin by mutableStateOf(ShellScreen.BookShelf)
     val entryBrowserListState = androidx.compose.foundation.lazy.LazyListState()
+
+    /** Seed sections loaded into the unified TOC outline editor. */
+    var tocEditorSeed by mutableStateOf<List<Section>>(emptyList())
+    /** When true, the editor offers 替换/追加 (AI result on top of an existing TOC). */
+    var tocEditorAllowAppend by mutableStateOf(false)
+    /** True while a 目录 extraction API call is in flight. */
+    var tocGenerating by mutableStateOf(false)
+    var tocError by mutableStateOf<String?>(null)
+    /** Transient buffer of 目录-page photos, held only until extraction, never stored. */
+    val tocCaptureBuffer = mutableStateListOf<ByteArray>()
+    /** True when the active PDF picker/import flow targets 目录 extraction. */
+    var pdfImportForToc by mutableStateOf(false)
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -227,6 +258,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         captureFromWorkbench = fromWorkbench
         captureShotCount = 0
         currentScreen = ShellScreen.Capture
+    }
+
+    fun openPdfImport(uri: Uri) {
+        pdfImportForToc = false
+        pdfImportUri = uri
+        currentScreen = ShellScreen.PdfImport
+    }
+
+    fun openPdfImportForToc(uri: Uri) {
+        pdfImportForToc = true
+        pdfImportUri = uri
+        currentScreen = ShellScreen.PdfImport
+    }
+
+    fun cancelPdfImport() {
+        pdfImportUri = null
+        currentScreen = ShellScreen.PageList
+    }
+
+    /**
+     * Import a contiguous range of PDF pages (1-based, inclusive) as numbered
+     * Pages without OCR. Each page is rendered at archive resolution, stored as
+     * the page's archive image, and assigned [startPageNumber] + offset. Runs OCR
+     * later via [batchOcrAll]. Reuses the processing queue for progress.
+     */
+    fun importPdf(uri: Uri, fromPage: Int, toPage: Int, startPageNumber: Int) {
+        val book = activeBook ?: return
+        val lo = minOf(fromPage, toPage)
+        val hi = maxOf(fromPage, toPage)
+        pdfImportUri = null
+        currentScreen = ShellScreen.PageList
+        queueCollapsed = false
+        startNewBatchIfIdle()
+        viewModelScope.launch {
+            val source = try {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { PdfSource.open(getApplication(), uri) }
+            } catch (t: Throwable) {
+                ocrErrorMessage = "无法打开 PDF: ${t.message?.take(60) ?: "未知错误"}"
+                return@launch
+            }
+            try {
+                var current = activeBook ?: book
+                var pageNumber = startPageNumber
+                for (pdfPage in lo..hi) {
+                    val itemId = "pdf-$pdfPage"
+                    upsertProcessItem(processQueue, itemId, ProcessStep.Saving, message = "PDF 第 $pdfPage 页 → 第 $pageNumber 页")
+                    try {
+                        val bytes = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                            source.renderJpeg(pdfPage - 1, ImageProcessing.ARCHIVE_LONG_EDGE)
+                        }
+                        current = bookRepository.importPageImage(current, bytes, pageNumber)
+                        activeBook = current
+                        upsertProcessItem(processQueue, itemId, ProcessStep.Done, message = "第 $pageNumber 页")
+                        pageNumber++
+                    } catch (e: DuplicatePageNumberException) {
+                        upsertProcessItem(processQueue, itemId, ProcessStep.Failed, message = "第 $pageNumber 页已存在，跳过")
+                        pageNumber++
+                    } catch (t: Throwable) {
+                        upsertProcessItem(processQueue, itemId, ProcessStep.Failed, message = t.message?.take(60) ?: "导入失败")
+                    }
+                }
+                refreshBooks()
+                syncToDropbox(current)
+            } finally {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { source.close() }
+            }
+        }
     }
 
     fun saveShot(bytes: ByteArray) {
@@ -365,10 +463,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun batchOcr() {
+    /**
+     * Batch-OCR everything not yet recognized: imported/numbered pages that
+     * have no OCR text (processed first, since they're one step from done),
+     * then captures that still lack a page number. One button, one queue.
+     */
+    fun batchOcrAll() {
         queueCollapsed = false
         if (isMonthlyApiBudgetExceeded()) {
             showMonthlyApiBudgetError()
+            return
+        }
+        if (!appSettings.hasAnyProvider) {
+            ocrErrorMessage = "未配置 OCR 服务（去设置添加）"
             return
         }
         startNewBatchIfIdle()
@@ -377,22 +484,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val parallel = config.parallelOcr && usable.size > 1
 
         viewModelScope.launch {
-            val pendingCaptures = activeBook?.captures?.filter { it.ocrText == null }.orEmpty()
+            val book = activeBook
+            val pendingPages = book?.pages
+                ?.filter { it.ocrText.isNullOrBlank() && it.archiveImage != null }
+                ?.sortedBy { it.page }
+                .orEmpty()
+            val pendingCaptures = book?.captures?.filter { it.ocrText == null }.orEmpty()
+            pendingPages.forEach { page -> upsertProcessItem(processQueue, "page-${page.page}", ProcessStep.Queued) }
             pendingCaptures.forEach { capture -> upsertProcessItem(processQueue, capture.id, ProcessStep.Queued) }
+            val work: List<OcrWork> = pendingPages.map { OcrWork.Pg(it) } + pendingCaptures.map { OcrWork.Cap(it) }
 
             if (parallel) {
-                val channel = kotlinx.coroutines.channels.Channel<Capture>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-                for (capture in pendingCaptures) channel.send(capture)
+                val channel = kotlinx.coroutines.channels.Channel<OcrWork>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                for (item in work) channel.send(item)
                 channel.close()
                 coroutineScope {
                     val workers = usable.map { provider ->
                         async {
-                            for (capture in channel) {
+                            for (item in channel) {
                                 if (isMonthlyApiBudgetExceeded()) {
                                     showMonthlyApiBudgetError()
                                     break
                                 }
-                                runOcrCapture(capture, jumpToPage = false, assignedProvider = provider)
+                                when (item) {
+                                    is OcrWork.Pg -> runOcrPage(item.page, provider)
+                                    is OcrWork.Cap -> runOcrCapture(item.capture, jumpToPage = false, assignedProvider = provider)
+                                }
                             }
                         }
                     }
@@ -402,14 +519,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     activeBook = bookRepository.loadBook(uid) ?: activeBook
                 }
             } else {
-                for (capture in pendingCaptures) {
+                for (item in work) {
                     if (isMonthlyApiBudgetExceeded()) {
                         showMonthlyApiBudgetError()
                         break
                     }
-                    runOcrCapture(capture, jumpToPage = false)
+                    when (item) {
+                        is OcrWork.Pg -> runOcrPage(item.page, null)
+                        is OcrWork.Cap -> runOcrCapture(item.capture, jumpToPage = false)
+                    }
                 }
             }
+        }
+    }
+
+    private suspend fun runOcrPage(page: Page, assignedProvider: LlmProvider?) {
+        val book = activeBook ?: return
+        val key = appSettings.geminiApiKey.orEmpty()
+        val statusKey = "page-${page.page}"
+        val effectiveConfig = if (assignedProvider != null) {
+            ProviderConfig(providers = listOf(assignedProvider), activeIndex = 0, fallbackOnError = false)
+        } else {
+            appSettings.providerConfig
+        }
+        ocrStatus[statusKey] = OcrJobState.Running
+        upsertProcessItem(processQueue, statusKey, ProcessStep.Ocr, providerName = assignedProvider?.name)
+        try {
+            val updated = bookRepository.ocrExistingPage(
+                book,
+                page,
+                key,
+                providerConfig = effectiveConfig,
+                onApiCall = { providerId -> recordApiCall(providerId) },
+            )
+            ocrStatus.remove(statusKey)
+            activeBook = updated
+            ocrErrorMessage = null
+            refreshBooks()
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Done)
+            syncToDropbox(updated)
+        } catch (t: Throwable) {
+            ocrStatus[statusKey] = OcrJobState.Failed
+            setOcrFailure(book.uid, page.page, "OCR 失败: ${t.message?.take(80) ?: "未知错误"}")
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
+            OcrRetryWorker.enqueuePageOcr(getApplication(), book.uid, page.page)
         }
     }
 
@@ -441,6 +594,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun updateBookMeta(book: Book, title: String, author: String) {
+        viewModelScope.launch {
+            val updated = bookRepository.updateBookMeta(book, title, author)
+            if (activeBook?.uid == updated.uid) activeBook = updated
+            refreshBooks()
+            syncToDropbox(updated)
+        }
+    }
+
     fun changePageNumber(page: Page, newNumber: Int) {
         val book = activeBook ?: return
         viewModelScope.launch {
@@ -452,6 +614,130 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 syncToDropbox(updated)
             } catch (e: DuplicatePageNumberException) {
                 ocrErrorMessage = e.message
+            }
+        }
+    }
+
+    fun openToc() {
+        tocError = null
+        currentScreen = ShellScreen.Toc
+    }
+
+    fun closeToc() {
+        currentScreen = ShellScreen.PageList
+    }
+
+    /** Open the unified outline editor seeded with the book's current TOC. */
+    fun openTocEditor() {
+        tocEditorSeed = activeBook?.sections.orEmpty()
+        tocEditorAllowAppend = false
+        currentScreen = ShellScreen.TocEditor
+    }
+
+    fun cancelTocEditor() {
+        tocEditorSeed = emptyList()
+        tocEditorAllowAppend = false
+        currentScreen = ShellScreen.Toc
+    }
+
+    /** Save the edited outline; when [append], keep the existing TOC and add to it. */
+    fun saveTocFromEditor(sections: List<Section>, append: Boolean) {
+        val book = activeBook ?: return
+        val merged = if (append) book.sections + sections else sections
+        tocEditorSeed = emptyList()
+        tocEditorAllowAppend = false
+        currentScreen = ShellScreen.Toc
+        saveSections(merged)
+    }
+
+    /** Persist the book's table of contents, then sync. */
+    fun saveSections(sections: List<Section>) {
+        val book = activeBook ?: return
+        viewModelScope.launch {
+            val updated = bookRepository.updateSections(book, sections)
+            activeBook = updated
+            patchBooks(listOf(updated))
+            syncToDropbox(updated)
+        }
+    }
+
+    // ---- AI 目录 generation from transient 拍照 / PDF images (never stored) ----
+
+    fun openTocCapture() {
+        tocCaptureBuffer.clear()
+        tocError = null
+        currentScreen = ShellScreen.TocCapture
+    }
+
+    fun addTocShot(bytes: ByteArray) {
+        tocCaptureBuffer.add(bytes)
+    }
+
+    /** Finish 目录 capture: extract from the buffered photos, then discard them. */
+    fun finishTocCapture() {
+        val images = tocCaptureBuffer.toList()
+        tocCaptureBuffer.clear()
+        if (images.isEmpty()) {
+            currentScreen = ShellScreen.Toc
+            return
+        }
+        currentScreen = ShellScreen.Toc
+        generateTocFromImages(images)
+    }
+
+    fun cancelTocCapture() {
+        tocCaptureBuffer.clear()
+        currentScreen = ShellScreen.Toc
+    }
+
+    /**
+     * Run AI 目录 extraction over in-memory images. On success, seeds the unified
+     * editor and opens it; images are the caller's transient bytes (never stored).
+     */
+    fun generateTocFromImages(images: List<ByteArray>) {
+        val book = activeBook ?: return
+        if (!appSettings.hasAnyProvider) {
+            tocError = "未配置 OCR 服务（去设置添加）"
+            return
+        }
+        if (isMonthlyApiBudgetExceeded()) {
+            showMonthlyApiBudgetError()
+            tocError = ocrErrorMessage
+            return
+        }
+        if (images.isEmpty()) {
+            tocError = "没有目录页图片"
+            return
+        }
+        tocGenerating = true
+        tocError = null
+        viewModelScope.launch {
+            try {
+                val downscaled = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    images.mapNotNull { bytes ->
+                        runCatching { ImageProcessing.toOcrJpeg(ImageProcessing.decode(bytes)) }.getOrNull()
+                    }
+                }
+                val items = OcrDispatcher(appSettings.providerConfig)
+                    .extractToc(downscaled, onApiCall = { providerId -> recordApiCall(providerId) })
+                tocGenerating = false
+                if (items.isEmpty()) {
+                    tocError = "未能从图片中识别出目录，请换清晰的目录页重试"
+                } else {
+                    tocEditorSeed = items.map { item ->
+                        Section(
+                            id = java.util.UUID.randomUUID().toString().take(8),
+                            title = item.title,
+                            startPage = item.page,
+                            level = item.level,
+                        )
+                    }
+                    tocEditorAllowAppend = book.sections.isNotEmpty()
+                    currentScreen = ShellScreen.TocEditor
+                }
+            } catch (t: Throwable) {
+                tocGenerating = false
+                tocError = t.message?.take(120) ?: "目录识别失败"
             }
         }
     }

@@ -11,8 +11,11 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.android.Auth
@@ -29,8 +32,10 @@ import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.EntryBrowserScreen
 import com.readingnotes.app.ui.EntryEditor
 import com.readingnotes.app.ui.OcrJobState
+import com.readingnotes.app.pdf.PdfSource
 import com.readingnotes.app.ui.PageNumberSheet
 import com.readingnotes.app.ui.PageListScreen
+import com.readingnotes.app.ui.PdfImportScreen
 import com.readingnotes.app.ui.PaletteScreen
 import com.readingnotes.app.ui.ProviderSettingsScreen
 import com.readingnotes.app.ui.SettingsScreen
@@ -54,6 +59,20 @@ class MainActivity : ComponentActivity() {
             return@registerForActivityResult
         }
         viewModel.importBackup(inputStream)
+    }
+
+    private val pdfPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        viewModel.openPdfImport(uri)
+    }
+
+    private val tocPdfPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        viewModel.openPdfImportForToc(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,8 +127,16 @@ class MainActivity : ComponentActivity() {
                     else ShellScreen.Workbench
                 }
                 ShellScreen.Capture -> if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
+                ShellScreen.PdfImport -> {
+                    val target = if (viewModel.pdfImportForToc) ShellScreen.Toc else ShellScreen.PageList
+                    viewModel.pdfImportUri = null
+                    target
+                }
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
+                ShellScreen.Toc -> ShellScreen.PageList
+                ShellScreen.TocEditor -> ShellScreen.Toc
+                ShellScreen.TocCapture -> ShellScreen.Toc
                 ShellScreen.BookShelf -> ShellScreen.BookShelf
             }
         }
@@ -130,6 +157,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.currentScreen = ShellScreen.PageList
                     },
                     onDeleteBooks = { uids -> viewModel.deleteBooks(uids) },
+                    onEditBook = { book, title, author -> viewModel.updateBookMeta(book, title, author) },
                     onEntries = {
                         viewModel.entryBrowserOrigin = ShellScreen.BookShelf
                         viewModel.entryBrowserBookUid = null
@@ -152,11 +180,14 @@ class MainActivity : ComponentActivity() {
                         processItems = viewModel.processQueue,
                         onOpenPage = { page ->
                             viewModel.workbenchFocus = null
+                            viewModel.workbenchFocusIsExcerpt = false
                             viewModel.activePageIndex = book.pages.indexOf(page).coerceAtLeast(0)
                             viewModel.currentScreen = ShellScreen.Workbench
                         },
                         onCapture = { viewModel.openCapture(fromWorkbench = false) },
-                        onBatchOcr = { viewModel.batchOcr() },
+                        onImportPdf = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                        onBatchOcr = { viewModel.batchOcrAll() },
+                        onEditBook = { title, author -> viewModel.updateBookMeta(book, title, author) },
                         onBack = {
                             viewModel.onEnterBookShelf()
                             viewModel.currentScreen = ShellScreen.BookShelf
@@ -179,6 +210,62 @@ class MainActivity : ComponentActivity() {
                             viewModel.entryBrowserBookUid = book.uid
                             viewModel.currentScreen = ShellScreen.EntryBrowser
                         },
+                        onToc = { viewModel.openToc() },
+                    )
+                }
+            }
+
+            ShellScreen.Toc -> {
+                val book = viewModel.activeBook
+                if (book == null) {
+                    viewModel.currentScreen = ShellScreen.BookShelf
+                } else {
+                    com.readingnotes.app.ui.TocScreen(
+                        book = book,
+                        generating = viewModel.tocGenerating,
+                        errorText = viewModel.tocError,
+                        onBack = { viewModel.closeToc() },
+                        onEdit = { viewModel.openTocEditor() },
+                        onCapture = { viewModel.openTocCapture() },
+                        onImportPdf = { tocPdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                        onJumpToPage = { pageNumber ->
+                            val idx = book.pages.indexOfFirst { it.page >= pageNumber }
+                            if (idx >= 0) {
+                                viewModel.workbenchFocus = null
+                                viewModel.workbenchFocusIsExcerpt = false
+                                viewModel.activePageIndex = idx
+                                viewModel.currentScreen = ShellScreen.Workbench
+                            }
+                        },
+                    )
+                }
+            }
+
+            ShellScreen.TocEditor -> {
+                val book = viewModel.activeBook
+                if (book == null) {
+                    viewModel.currentScreen = ShellScreen.BookShelf
+                } else {
+                    com.readingnotes.app.ui.TocEditorScreen(
+                        seed = viewModel.tocEditorSeed,
+                        allowAppend = viewModel.tocEditorAllowAppend,
+                        onCancel = { viewModel.cancelTocEditor() },
+                        onSave = { sections, append -> viewModel.saveTocFromEditor(sections, append) },
+                    )
+                }
+            }
+
+            ShellScreen.TocCapture -> {
+                val book = viewModel.activeBook
+                if (book == null) {
+                    viewModel.currentScreen = ShellScreen.BookShelf
+                } else {
+                    CaptureScreen(
+                        title = "拍目录页（识别后即丢弃）",
+                        shotCount = viewModel.tocCaptureBuffer.size,
+                        saving = false,
+                        onShot = { bytes -> viewModel.addTocShot(bytes) },
+                        onClose = { viewModel.finishTocCapture() },
                     )
                 }
             }
@@ -197,6 +284,49 @@ class MainActivity : ComponentActivity() {
                             viewModel.currentScreen = if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                         },
                     )
+                }
+            }
+
+            ShellScreen.PdfImport -> {
+                val book = viewModel.activeBook
+                val uri = viewModel.pdfImportUri
+                if (book == null || uri == null) {
+                    viewModel.currentScreen = ShellScreen.PageList
+                } else {
+                    val context = LocalContext.current
+                    val source = remember(uri) {
+                        runCatching { PdfSource.open(context, uri) }.getOrNull()
+                    }
+                    DisposableEffect(source) {
+                        onDispose { source?.close() }
+                    }
+                    if (source == null) {
+                        LaunchedEffect(uri) {
+                            viewModel.ocrErrorMessage = "无法打开 PDF 文件"
+                            viewModel.cancelPdfImport()
+                        }
+                    } else {
+                        PdfImportScreen(
+                            source = source,
+                            onCancel = {
+                                if (viewModel.pdfImportForToc) {
+                                    viewModel.pdfImportUri = null
+                                    viewModel.currentScreen = ShellScreen.Toc
+                                } else {
+                                    viewModel.cancelPdfImport()
+                                }
+                            },
+                            onImport = { fromPage, toPage, startPageNumber ->
+                                viewModel.importPdf(uri, fromPage, toPage, startPageNumber)
+                            },
+                            forToc = viewModel.pdfImportForToc,
+                            onExtractToc = { images ->
+                                viewModel.pdfImportUri = null
+                                viewModel.currentScreen = ShellScreen.Toc
+                                viewModel.generateTocFromImages(images)
+                            },
+                        )
+                    }
                 }
             }
 
@@ -250,6 +380,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onBack = {
                             viewModel.workbenchFocus = null
+                            viewModel.workbenchFocusIsExcerpt = false
                             viewModel.activeBook = viewModel.bookRepository.loadBook(book.uid) ?: book
                             viewModel.currentScreen = ShellScreen.PageList
                         },
@@ -266,6 +397,7 @@ class MainActivity : ComponentActivity() {
                         onCollapseQueue = { viewModel.queueCollapsed = true },
                         onRefreshBooks = { viewModel.refreshBooks() },
                         focusRange = viewModel.workbenchFocus,
+                        focusIsExcerpt = viewModel.workbenchFocusIsExcerpt,
                     )
                 }
             }
@@ -374,6 +506,7 @@ class MainActivity : ComponentActivity() {
                             onViewOriginal = {
                                 if (entry.page != null) {
                                     viewModel.workbenchFocus = viewModel.locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
+                                    viewModel.workbenchFocusIsExcerpt = entry.kind == com.readingnotes.app.model.EntryKind.excerpt
                                     viewModel.activePageIndex = pageIndex
                                     viewModel.currentScreen = ShellScreen.Workbench
                                 }

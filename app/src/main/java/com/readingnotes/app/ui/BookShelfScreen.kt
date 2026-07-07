@@ -67,6 +67,7 @@ fun BookShelfScreen(
     onSettings: () -> Unit,
     onNewBook: (Book) -> Unit,
     onDeleteBooks: (List<String>) -> Unit = {},
+    onEditBook: (Book, String, String) -> Unit = { _, _, _ -> },
     onEntries: () -> Unit = {},
     onOpenNotebook: () -> Unit = {},
 ) {
@@ -75,6 +76,7 @@ fun BookShelfScreen(
     val selectedUids = remember { mutableStateListOf<String>() }
     val selectMode = selectedUids.isNotEmpty()
     var confirmDelete by remember { mutableStateOf(false) }
+    var editBook by remember { mutableStateOf<Book?>(null) }
 
     fun toggleSelect(uid: String) {
         if (uid in selectedUids) selectedUids.remove(uid) else selectedUids.add(uid)
@@ -105,6 +107,19 @@ fun BookShelfScreen(
                             .clickable { selectedUids.clear() }
                             .padding(8.dp),
                     )
+                    if (selectedUids.size == 1) {
+                        Text(
+                            "编辑",
+                            fontSize = 13.sp,
+                            color = Accent,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable {
+                                    editBook = books.find { it.uid == selectedUids.first() }
+                                }
+                                .padding(8.dp),
+                        )
+                    }
                     Text(
                         "删除",
                         fontSize = 13.sp,
@@ -224,13 +239,28 @@ fun BookShelfScreen(
     }
 
     if (showNewDialog) {
-        NewBookDialog(
+        BookInfoDialog(
             onDismiss = { showNewDialog = false },
-            onCreate = { title, author ->
+            onConfirm = { title, author ->
                 showNewDialog = false
                 val book = repository.createBook(title, author)
                 onNewBook(book)
             },
+        )
+    }
+
+    editBook?.let { book ->
+        BookInfoDialog(
+            onDismiss = { editBook = null },
+            onConfirm = { title, author ->
+                editBook = null
+                selectedUids.clear()
+                onEditBook(book, title, author)
+            },
+            initialTitle = book.title,
+            initialAuthor = book.author,
+            dialogTitle = "编辑信息",
+            confirmLabel = "保存",
         )
     }
 
@@ -435,13 +465,20 @@ private fun NotebookCard(entryCount: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun NewBookDialog(onDismiss: () -> Unit, onCreate: (String, String) -> Unit) {
-    var title by remember { mutableStateOf("") }
-    var author by remember { mutableStateOf("") }
+fun BookInfoDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit,
+    initialTitle: String = "",
+    initialAuthor: String = "",
+    dialogTitle: String = "新书",
+    confirmLabel: String = "创建",
+) {
+    var title by remember { mutableStateOf(initialTitle) }
+    var author by remember { mutableStateOf(initialAuthor) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新书") },
+        title = { Text(dialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("书名") }, singleLine = true)
@@ -449,8 +486,8 @@ private fun NewBookDialog(onDismiss: () -> Unit, onCreate: (String, String) -> U
             }
         },
         confirmButton = {
-            TextButton(onClick = { onCreate(title, author) }, enabled = title.isNotBlank()) {
-                Text("创建")
+            TextButton(onClick = { onConfirm(title, author) }, enabled = title.isNotBlank()) {
+                Text(confirmLabel)
             }
         },
         dismissButton = {

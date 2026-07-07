@@ -66,6 +66,51 @@ class ClaudeOcrClient(
         }
     }
 
+    /** Sends one or more 目录 images and returns the raw model text (JSON). */
+    suspend fun extractToc(images: List<ByteArray>): String = withContext(Dispatchers.IO) {
+        val content = JSONArray()
+        for (img in images) {
+            val b64 = android.util.Base64.encodeToString(img, android.util.Base64.NO_WRAP)
+            content.put(JSONObject().apply {
+                put("type", "image")
+                put("source", JSONObject().apply {
+                    put("type", "base64")
+                    put("media_type", "image/jpeg")
+                    put("data", b64)
+                })
+            })
+        }
+        content.put(JSONObject().apply {
+            put("type", "text")
+            put("text", TocExtraction.PROMPT)
+        })
+        val body = JSONObject().apply {
+            put("model", model)
+            put("max_tokens", 4096)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", content)
+            }))
+        }.toString()
+
+        val url = "${baseUrl.trimEnd('/')}/v1/messages"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("x-api-key", apiKey)
+            .addHeader("anthropic-version", "2023-06-01")
+            .addHeader("Content-Type", "application/json")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(request).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw GeminiOcrClient.OcrException("Claude HTTP ${resp.code}: ${text.take(200)}")
+            }
+            parseResponse(text)
+        }
+    }
+
     private fun parseResponse(json: String): String {
         val root = JSONObject(json)
         val content = root.optJSONArray("content")

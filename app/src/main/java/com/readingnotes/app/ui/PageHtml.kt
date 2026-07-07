@@ -19,6 +19,9 @@ object PageHtml {
     private val PAPER = "#F4EFE3"
     private val INK = "#211E1A"
 
+    /** Neutral warm-gray fill for plain excerpts (see [PageHighlight.EXCERPT_COLOR]). */
+    private val EXCERPT_CSS = "#7C756B"
+
     fun render(
         page: Page,
         colors: Map<String, String>,
@@ -26,17 +29,32 @@ object PageHtml {
         fontSizePx: Int = 21,
         interactive: Boolean = false,
         flash: IntRange? = null,
+        flashExcerpt: Boolean = false,
     ): String {
         val writingMode = if (vertical) "vertical-rl" else "horizontal-tb"
         // Vertical (tategaki) 傍線 runs down the right edge of the column; only
         // horizontal text gets a bottom underline.
         val hlBorder = if (vertical) "border-left" else "border-bottom"
+        val hlBorderColor = if (vertical) "border-left-color" else "border-bottom-color"
         val swatches = colors.entries.joinToString("\n") { (name, css) ->
             ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}" +
             "\n.hl-$name.hl-focus{background:${css}70;$hlBorder:2.5px solid $css;}"
         }
-        val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors)
-        val startJs = if (flash == null) SCROLL_TO_START_JS else flashJs(flash)
+        // Excerpt: neutral gray *fill block*, no underline; deepens on focus. On a
+        // 查看原文 jump the block stays (so it remains tappable), and a gray underline
+        // slowly fades in and then holds (.exflash) as the "you jumped here" cue.
+        val exColor = PageHighlight.EXCERPT_COLOR
+        val excerptCss = ".hl-$exColor{background:${EXCERPT_CSS}40;}" +
+            "\n.hl-$exColor.hl-focus{background:${EXCERPT_CSS}73;}" +
+            "\n.exflash{$hlBorder:2px solid $EXCERPT_CSS;animation:exflashfade 1.6s ease-in;}" +
+            "\n@keyframes exflashfade{0%{$hlBorderColor:transparent;}60%{$hlBorderColor:transparent;}100%{$hlBorderColor:$EXCERPT_CSS;}}"
+        val exRange = if (flashExcerpt) flash else null
+        val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors, exRange)
+        val startJs = when {
+            flash == null -> SCROLL_TO_START_JS
+            flashExcerpt -> scrollToRangeJs(flash)
+            else -> flashJs(flash)
+        }
         val selectJs = if (interactive) SELECTION_JS else ""
         val userSelect = if (interactive) "text" else "none"
         val verticalScrollLock = if (vertical) VERTICAL_SCROLL_LOCK_JS else ""
@@ -59,6 +77,7 @@ object PageHtml {
               @keyframes flashfade{0%,40%{box-shadow:inset 0 0 0 100px #3C546855;}100%{box-shadow:inset 0 0 0 100px transparent;}}
               .hl-focus{transition:background 0.15s ease-out;}
               $swatches
+              $excerptCss
             </style></head><body>$body$HIGHLIGHT_UPDATE_FN$startJs$selectJs$verticalScrollLock</body></html>
         """.trimIndent()
     }
@@ -67,6 +86,7 @@ object PageHtml {
         text: String,
         highlights: List<PageHighlight>,
         colors: Map<String, String>,
+        exflashRange: IntRange? = null,
     ): String {
         val cps = text.codePoints().toArray()
         val n = cps.size
@@ -82,13 +102,13 @@ object PageHtml {
             val ruby = tryRuby(cps, i)
             if (ruby != null) {
                 val (endExclusive, base, reading) = ruby
-                val cls = highlightClass(highlights, colors, i)
+                val cls = spanClass(highlights, colors, i, exflashRange)
                 sb.append("<span data-s=\"$i\" data-e=\"$endExclusive\"$cls>")
                 sb.append("<ruby>${esc(base)}<rt>${esc(reading)}</rt></ruby>")
                 sb.append("</span>")
                 i = endExclusive
             } else {
-                val cls = highlightClass(highlights, colors, i)
+                val cls = spanClass(highlights, colors, i, exflashRange)
                 sb.append("<span data-s=\"$i\" data-e=\"${i + 1}\"$cls>")
                 sb.append(esc(String(Character.toChars(cp))))
                 sb.append("</span>")
@@ -122,14 +142,34 @@ object PageHtml {
             (c in 'A'..'Z') || (c in 'a'..'z')
     }
 
-    private fun highlightClass(
+    /**
+     * Combined ` class="..."` for a span: the highlight/excerpt block class plus,
+     * when [offset] is inside [exflashRange] (excerpt 查看原文 jump), the `exflash`
+     * underline-fade class. Keeping the block class means the excerpt stays
+     * tappable during the jump (so its action bar can be summoned).
+     */
+    private fun spanClass(
         highlights: List<PageHighlight>,
         colors: Map<String, String>,
         offset: Int,
+        exflashRange: IntRange?,
     ): String {
-        val hit = highlights.lastOrNull { offset >= it.start && offset < it.end && colors.containsKey(it.color) }
-            ?: return ""
-        return " class=\"hl-${hit.color}\""
+        val names = mutableListOf<String>()
+        highlightClassName(highlights, colors, offset)?.let(names::add)
+        if (exflashRange != null && offset in exflashRange) names.add("exflash")
+        return if (names.isEmpty()) "" else " class=\"${names.joinToString(" ")}\""
+    }
+
+    private fun highlightClassName(
+        highlights: List<PageHighlight>,
+        colors: Map<String, String>,
+        offset: Int,
+    ): String? {
+        val hit = highlights.lastOrNull {
+            offset >= it.start && offset < it.end &&
+                (colors.containsKey(it.color) || it.color == PageHighlight.EXCERPT_COLOR)
+        } ?: return null
+        return "hl-${hit.color}"
     }
 
     private fun esc(s: String): String = s
@@ -164,6 +204,28 @@ object PageHtml {
               }
             }
             if(first) setTimeout(function(){ first.scrollIntoView({inline:'center', block:'center'}); }, 50);
+          });
+        </script>
+    """.trimIndent()
+
+    /**
+     * Scrolls to the given range without any box-shadow flash. Used for excerpt
+     * 查看原文 jumps: the excerpt spans already carry `.exflash` (a gray underline
+     * that slowly fades in and holds, on top of the still-tappable block), so JS
+     * only needs to bring them into view.
+     */
+    private fun scrollToRangeJs(range: IntRange) = """
+        <script>
+          window.addEventListener('load', function(){
+            var spans = document.querySelectorAll('[data-s]');
+            for(var i=0;i<spans.length;i++){
+              var s = parseInt(spans[i].getAttribute('data-s'));
+              if(s >= ${range.first} && s <= ${range.last}){
+                var el = spans[i];
+                setTimeout(function(){ el.scrollIntoView({inline:'center', block:'center'}); }, 50);
+                break;
+              }
+            }
           });
         </script>
     """.trimIndent()
@@ -270,7 +332,7 @@ object PageHtml {
      * avoiding a full WebView reload (which would reset scroll position).
      */
     fun highlightUpdateJs(highlights: List<PageHighlight>, colors: Map<String, String>): String {
-        val filtered = highlights.filter { colors.containsKey(it.color) }
+        val filtered = highlights.filter { colors.containsKey(it.color) || it.color == PageHighlight.EXCERPT_COLOR }
         val jsArray = filtered.joinToString(",", "[", "]") { "[${it.start},${it.end},'${it.color}']" }
         return "if(typeof RN_applyHL==='function')RN_applyHL($jsArray);"
     }

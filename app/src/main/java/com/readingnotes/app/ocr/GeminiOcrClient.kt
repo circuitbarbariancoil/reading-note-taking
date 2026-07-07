@@ -64,6 +64,39 @@ class GeminiOcrClient(
         }
     }
 
+    /** Sends one or more 目录 images and returns the raw model text (JSON). */
+    suspend fun extractToc(images: List<ByteArray>): String = withContext(Dispatchers.IO) {
+        val parts = JSONArray()
+        for (img in images) {
+            parts.put(JSONObject().apply {
+                put("inline_data", JSONObject().apply {
+                    put("mime_type", "image/jpeg")
+                    put("data", android.util.Base64.encodeToString(img, android.util.Base64.NO_WRAP))
+                })
+            })
+        }
+        parts.put(JSONObject().put("text", TocExtraction.PROMPT))
+        val body = JSONObject().apply {
+            put("contents", JSONArray().put(JSONObject().put("parts", parts)))
+        }.toString()
+
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+            "$model:generateContent?key=$apiKey"
+        val request = Request.Builder()
+            .url(url)
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(request).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                if (resp.code == 429) throw RateLimitException("Gemini API 限流 (429)，请稍后重试")
+                throw OcrException("Gemini HTTP ${resp.code}: $text")
+            }
+            parseText(text)
+        }
+    }
+
     private fun parseText(json: String): String {
         val root = JSONObject(json)
         val candidates = root.optJSONArray("candidates")

@@ -96,6 +96,7 @@ fun WorkbenchScreen(
     onCollapseQueue: () -> Unit = {},
     onRefreshBooks: () -> Unit = {},
     focusRange: IntRange? = null,
+    focusIsExcerpt: Boolean = false,
 ) {
     val context = LocalContext.current
     var book by remember(initialBook) { mutableStateOf(initialBook) }
@@ -154,8 +155,9 @@ fun WorkbenchScreen(
 
     fun applyExcerpt() {
         val sel = selection ?: return
-        val entry = Entries.excerptEntry(page, sel.start, sel.end, Instant.now().toString()) ?: return
-        save(book.copy(entries = book.entries + entry))
+        val (hl, entry) = Entries.excerptEntry(page, sel.start, sel.end, Instant.now().toString()) ?: return
+        val newPages = book.pages.map { if (it.page == page.page) it.copy(highlights = it.highlights + hl) else it }
+        save(book.copy(pages = newPages, entries = book.entries + entry))
         selection = null
     }
 
@@ -166,6 +168,7 @@ fun WorkbenchScreen(
                     title = book.title,
                     author = book.author,
                     pageNo = page.page,
+                    sectionLabel = TocLayout.sectionFor(book.sections, page.page)?.title,
                     mode = mode,
                     onMode = { mode = it },
                     onCollapse = { toolbarCollapsed = true },
@@ -204,6 +207,7 @@ fun WorkbenchScreen(
                         onSelectionChange = { sel -> selection = sel; if (sel != null) tappedHighlight = null },
                         modifier = Modifier.fillMaxSize(),
                         flash = focusRange.takeIf { pageIndex == initialPageIndex },
+                        flashExcerpt = focusIsExcerpt && pageIndex == initialPageIndex,
                         onHighlightTap = { tap ->
                             if (tap == null) {
                                 tappedHighlight = null
@@ -272,18 +276,20 @@ fun WorkbenchScreen(
                 val hl = page.highlights.firstOrNull { h -> h.color == tap.color && tap.start >= h.start && tap.start < h.end }
                 if (hl != null) {
                     val linkedEntry = book.entries.firstOrNull { it.highlightId == hl.id }
+                    val isExcerptMark = hl.color == com.readingnotes.app.model.PageHighlight.EXCERPT_COLOR
+                    val onChangeColorCb: ((String) -> Unit)? = if (isExcerptMark) null else { newColor ->
+                        val newHl = hl.copy(color = newColor)
+                        val newPages = book.pages.map { p ->
+                            if (p.page != page.page) p
+                            else p.copy(highlights = p.highlights.map { if (it.id == hl.id) newHl else it })
+                        }
+                        save(book.copy(pages = newPages))
+                        tappedHighlight = null
+                    }
                     HighlightActionBar(
                         currentColor = hl.color,
                         paletteColors = settings.palette.activeColors(),
-                        onChangeColor = { newColor ->
-                            val newHl = hl.copy(color = newColor)
-                            val newPages = book.pages.map { p ->
-                                if (p.page != page.page) p
-                                else p.copy(highlights = p.highlights.map { if (it.id == hl.id) newHl else it })
-                            }
-                            save(book.copy(pages = newPages))
-                            tappedHighlight = null
-                        },
+                        onChangeColor = onChangeColorCb,
                         onDelete = { confirmDeleteHighlight = true },
                         onViewEntry = if (linkedEntry != null) {
                             { editingEntryId = linkedEntry.id; tappedHighlight = null }
@@ -383,7 +389,8 @@ fun WorkbenchScreen(
                 androidx.compose.material3.TextButton(onClick = {
                     val t = target
                     confirmDeleteEntry = null
-                    val newPages = if (t.kind == EntryKind.highlight) {
+                    // Both highlights and excerpts leave a PageHighlight mark; clear it.
+                    val newPages = if (t.kind == EntryKind.highlight || t.kind == EntryKind.excerpt) {
                         book.pages.map { p ->
                             if (p.page != t.page) p
                             else p.copy(
@@ -496,6 +503,7 @@ private fun TopBar(
     title: String,
     author: String,
     pageNo: Int,
+    sectionLabel: String?,
     mode: MainMode,
     onMode: (MainMode) -> Unit,
     onCollapse: () -> Unit,
@@ -511,8 +519,8 @@ private fun TopBar(
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(author.ifBlank { null }, "p.$pageNo").joinToString(" ・ "),
-                fontSize = 12.sp, color = SumiSoft,
+                listOfNotNull(author.ifBlank { null }, "p.$pageNo", sectionLabel).joinToString(" ・ "),
+                fontSize = 12.sp, color = SumiSoft, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
         ModeToggle(mode, onMode)
@@ -613,7 +621,7 @@ private fun SelectionBar(
 private fun HighlightActionBar(
     currentColor: String,
     paletteColors: List<com.readingnotes.app.model.HighlightColor>,
-    onChangeColor: (String) -> Unit,
+    onChangeColor: ((String) -> Unit)?,
     onDelete: () -> Unit,
     onViewEntry: (() -> Unit)?,
     onSearch: () -> Unit,
@@ -634,26 +642,29 @@ private fun HighlightActionBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            paletteColors.forEach { c ->
-                val isActive = c.name == currentColor
-                Box(
-                    modifier = Modifier
-                        .size(if (isActive) 28.dp else 24.dp)
-                        .clip(CircleShape)
-                        .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent))
-                        .then(
-                            if (isActive) Modifier.clip(CircleShape).background(Color.Transparent)
-                            else Modifier
-                        )
-                        .clickable { if (!isActive) onChangeColor(c.name) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isActive) {
-                        Text("✓", fontSize = 12.sp, color = Color.White)
+            // Plain excerpts have no palette color, so no color picker is shown.
+            if (onChangeColor != null) {
+                paletteColors.forEach { c ->
+                    val isActive = c.name == currentColor
+                    Box(
+                        modifier = Modifier
+                            .size(if (isActive) 28.dp else 24.dp)
+                            .clip(CircleShape)
+                            .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent))
+                            .then(
+                                if (isActive) Modifier.clip(CircleShape).background(Color.Transparent)
+                                else Modifier
+                            )
+                            .clickable { if (!isActive) onChangeColor(c.name) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isActive) {
+                            Text("✓", fontSize = 12.sp, color = Color.White)
+                        }
                     }
                 }
+                Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
             }
-            Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
             if (onViewEntry != null) {
                 Text("条目", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onViewEntry))
             }

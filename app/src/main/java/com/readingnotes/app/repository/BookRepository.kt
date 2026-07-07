@@ -160,6 +160,33 @@ class BookRepository(
         return book
     }
 
+    /** Update a book's title/author metadata. Returns the updated book. */
+    suspend fun updateBookMeta(book: Book, title: String, author: String): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val updated = base.copy(
+                title = title.ifBlank { "未命名" },
+                author = author,
+                updatedAt = utcNow(),
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
+    /** Replace the book's table of contents, then persist + sync. */
+    suspend fun updateSections(book: Book, sections: List<com.readingnotes.app.model.Section>): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val sorted = sections.sortedWith(compareBy({ it.startPage }, { it.level }))
+            val updated = base.copy(sections = sorted, updatedAt = utcNow())
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /**
      * Save a photo as a Capture (unprocessed) without running OCR.
      * Returns the updated book with the new capture appended.
@@ -253,6 +280,43 @@ class BookRepository(
                 updatedAt = now,
                 pages = (base.pages + page).sortedBy { it.page },
                 captures = base.captures.filterNot { it.id == capture.id },
+            )
+            saveBook(updated)
+            enqueuePageArchiveUpload(updated, page)
+            cachedBook = updated
+            updated
+        }
+    }
+
+    /**
+     * Import one rendered image (e.g. a PDF page) directly as a numbered Page
+     * without OCR. The bytes are downscaled to the archive size and stored as
+     * the page's archive image; OCR can be run later via [ocrExistingPage].
+     * Throws [DuplicatePageNumberException] if the number is already taken.
+     */
+    suspend fun importPageImage(
+        book: Book,
+        sourceBytes: ByteArray,
+        pageNumber: Int,
+    ): Book = withContext(Dispatchers.IO) {
+        val archiveWebp = ImageProcessing.toArchiveWebp(ImageProcessing.decode(sourceBytes))
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            if (base.pages.any { it.page == pageNumber }) {
+                throw DuplicatePageNumberException(pageNumber)
+            }
+            val now = utcNow()
+            val archiveRelPath = "pages/p%04d_archive.webp".format(pageNumber)
+            saveArchiveImage(base.uid, archiveRelPath, archiveWebp)
+            val page = Page(
+                page = pageNumber,
+                archiveImage = archiveRelPath,
+                ocrText = null,
+                addedAt = now,
+            )
+            val updated = base.copy(
+                updatedAt = now,
+                pages = (base.pages + page).sortedBy { it.page },
             )
             saveBook(updated)
             enqueuePageArchiveUpload(updated, page)
