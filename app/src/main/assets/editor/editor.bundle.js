@@ -28233,7 +28233,9 @@
       super();
       this.ch = ch;
     }
-    eq(o) { return o.ch === this.ch; }
+    eq(o) {
+      return o.ch === this.ch;
+    }
     toDOM() {
       const s = document.createElement("span");
       s.className = "cloze-bracket";
@@ -28246,6 +28248,18 @@
   function touched(sel, from, to) {
     for (const r of sel.ranges) {
       if (r.from <= to && r.to >= from) return true;
+    }
+    return false;
+  }
+
+  // True only when a selection endpoint (caret) lies strictly inside (from, to).
+  // Boundaries are excluded so a collapsed caret resting at the span edge — e.g.
+  // the default caret at position 0 sitting on a cloze that opens the document —
+  // does not reveal it; and a whole-document/large selection (endpoints outside a
+  // mid-document span) keeps masked cloze masked until the caret truly enters.
+  function caretInside(sel, from, to) {
+    for (const r of sel.ranges) {
+      if ((r.from > from && r.from < to) || (r.to > from && r.to < to)) return true;
     }
     return false;
   }
@@ -28294,14 +28308,14 @@
               push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
             }
           }
+
           CLOZE_RE.lastIndex = 0;
           while ((m = CLOZE_RE.exec(text))) {
             const from = m.index;
             const to = from + m[0].length;
             const innerFrom = from + 2;
             const innerTo = to - 2;
-            const content = m[1];
-            if (touched(sel, from, to)) {
+            if (caretInside(sel, from, to)) {
               push(from, innerFrom, Decoration.replace({ widget: new BracketWidget("\uFF5F") }));
               push(innerFrom, innerTo, Decoration.mark({ class: "cloze-revealed" }));
               push(innerTo, to, Decoration.replace({ widget: new BracketWidget("\uFF60") }));

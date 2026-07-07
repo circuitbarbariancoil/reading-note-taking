@@ -26,6 +26,7 @@ const RUBY_RE = /([\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\u30FCA-Za-z]+)《([^�
 const HL_RE = /~=\{([^}]+)\}([\s\S]*?)=~/g;
 const BOLD_RE = /\*\*([^*]+)\*\*/g;
 const TAG_RE = /(^|\s)#([^\s#]+)/g;
+const CLOZE_RE = /==((?:(?!==)[\s\S])+)==/g;
 
 function cssFor(name) {
   const c = PALETTE.find((p) => p.name === name);
@@ -57,10 +58,38 @@ class HideWidget extends WidgetType {
   }
 }
 
+class BracketWidget extends WidgetType {
+  constructor(ch) {
+    super();
+    this.ch = ch;
+  }
+  eq(o) {
+    return o.ch === this.ch;
+  }
+  toDOM() {
+    const s = document.createElement("span");
+    s.className = "cloze-bracket";
+    s.textContent = this.ch;
+    return s;
+  }
+}
+
 // True when the current selection touches [from, to] — then show raw source.
 function touched(sel, from, to) {
   for (const r of sel.ranges) {
     if (r.from <= to && r.to >= from) return true;
+  }
+  return false;
+}
+
+// True only when a selection endpoint (caret) lies strictly inside (from, to).
+// Boundaries are excluded so a collapsed caret resting at the span edge — e.g.
+// the default caret at position 0 sitting on a cloze that opens the document —
+// does not reveal it; and a whole-document/large selection (endpoints outside a
+// mid-document span) keeps masked cloze masked until the caret truly enters.
+function caretInside(sel, from, to) {
+  for (const r of sel.ranges) {
+    if ((r.from > from && r.from < to) || (r.to > from && r.to < to)) return true;
   }
   return false;
 }
@@ -106,6 +135,23 @@ function livePreview(kind) {
             push(innerFrom, innerTo, Decoration.mark({
               attributes: { style: `background:${cssFor(color)}33;border-bottom:2px solid ${cssFor(color)};` },
             }));
+            push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
+          }
+        }
+
+        CLOZE_RE.lastIndex = 0;
+        while ((m = CLOZE_RE.exec(text))) {
+          const from = m.index;
+          const to = from + m[0].length;
+          const innerFrom = from + 2;
+          const innerTo = to - 2;
+          if (caretInside(sel, from, to)) {
+            push(from, innerFrom, Decoration.replace({ widget: new BracketWidget("\uFF5F") }));
+            push(innerFrom, innerTo, Decoration.mark({ class: "cloze-revealed" }));
+            push(innerTo, to, Decoration.replace({ widget: new BracketWidget("\uFF60") }));
+          } else {
+            push(from, innerFrom, Decoration.replace({ widget: new HideWidget() }));
+            push(innerFrom, innerTo, Decoration.mark({ class: "cloze-hidden" }));
             push(innerTo, to, Decoration.replace({ widget: new HideWidget() }));
           }
         }
