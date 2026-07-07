@@ -40,14 +40,14 @@ object PageHtml {
             ".hl-$name{background:${css}33;$hlBorder:2px solid $css;}" +
             "\n.hl-$name.hl-focus{background:${css}70;$hlBorder:2.5px solid $css;}"
         }
-        // Excerpt: neutral gray *fill block*, no underline; deepens on focus. The
-        // 查看原文 jump instead shows only a gray underline fading in/out (.exflash)
-        // with no block at all.
+        // Excerpt: neutral gray *fill block*, no underline; deepens on focus. On a
+        // 查看原文 jump the block stays (so it remains tappable), and a gray underline
+        // slowly fades in and then holds (.exflash) as the "you jumped here" cue.
         val exColor = PageHighlight.EXCERPT_COLOR
         val excerptCss = ".hl-$exColor{background:${EXCERPT_CSS}40;}" +
             "\n.hl-$exColor.hl-focus{background:${EXCERPT_CSS}73;}" +
-            "\n.exflash{$hlBorder:2px solid $EXCERPT_CSS;animation:exflashfade 0.6s ease-out;}" +
-            "\n@keyframes exflashfade{0%{$hlBorderColor:transparent;}100%{$hlBorderColor:$EXCERPT_CSS;}}"
+            "\n.exflash{$hlBorder:2px solid $EXCERPT_CSS;animation:exflashfade 1.6s ease-in;}" +
+            "\n@keyframes exflashfade{0%{$hlBorderColor:transparent;}60%{$hlBorderColor:transparent;}100%{$hlBorderColor:$EXCERPT_CSS;}}"
         val exRange = if (flashExcerpt) flash else null
         val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors, exRange)
         val startJs = when {
@@ -102,15 +102,13 @@ object PageHtml {
             val ruby = tryRuby(cps, i)
             if (ruby != null) {
                 val (endExclusive, base, reading) = ruby
-                val cls = if (exflashRange != null && i in exflashRange) " class=\"exflash\""
-                    else highlightClass(highlights, colors, i)
+                val cls = spanClass(highlights, colors, i, exflashRange)
                 sb.append("<span data-s=\"$i\" data-e=\"$endExclusive\"$cls>")
                 sb.append("<ruby>${esc(base)}<rt>${esc(reading)}</rt></ruby>")
                 sb.append("</span>")
                 i = endExclusive
             } else {
-                val cls = if (exflashRange != null && i in exflashRange) " class=\"exflash\""
-                    else highlightClass(highlights, colors, i)
+                val cls = spanClass(highlights, colors, i, exflashRange)
                 sb.append("<span data-s=\"$i\" data-e=\"${i + 1}\"$cls>")
                 sb.append(esc(String(Character.toChars(cp))))
                 sb.append("</span>")
@@ -144,16 +142,34 @@ object PageHtml {
             (c in 'A'..'Z') || (c in 'a'..'z')
     }
 
-    private fun highlightClass(
+    /**
+     * Combined ` class="..."` for a span: the highlight/excerpt block class plus,
+     * when [offset] is inside [exflashRange] (excerpt 查看原文 jump), the `exflash`
+     * underline-fade class. Keeping the block class means the excerpt stays
+     * tappable during the jump (so its action bar can be summoned).
+     */
+    private fun spanClass(
         highlights: List<PageHighlight>,
         colors: Map<String, String>,
         offset: Int,
+        exflashRange: IntRange?,
     ): String {
+        val names = mutableListOf<String>()
+        highlightClassName(highlights, colors, offset)?.let(names::add)
+        if (exflashRange != null && offset in exflashRange) names.add("exflash")
+        return if (names.isEmpty()) "" else " class=\"${names.joinToString(" ")}\""
+    }
+
+    private fun highlightClassName(
+        highlights: List<PageHighlight>,
+        colors: Map<String, String>,
+        offset: Int,
+    ): String? {
         val hit = highlights.lastOrNull {
             offset >= it.start && offset < it.end &&
                 (colors.containsKey(it.color) || it.color == PageHighlight.EXCERPT_COLOR)
-        } ?: return ""
-        return " class=\"hl-${hit.color}\""
+        } ?: return null
+        return "hl-${hit.color}"
     }
 
     private fun esc(s: String): String = s
@@ -195,7 +211,8 @@ object PageHtml {
     /**
      * Scrolls to the given range without any box-shadow flash. Used for excerpt
      * 查看原文 jumps: the excerpt spans already carry `.exflash` (a gray underline
-     * fading in/out, no block), so JS only needs to bring them into view.
+     * that slowly fades in and holds, on top of the still-tappable block), so JS
+     * only needs to bring them into view.
      */
     private fun scrollToRangeJs(range: IntRange) = """
         <script>
