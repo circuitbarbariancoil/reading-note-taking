@@ -46,6 +46,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.readingnotes.app.model.Book
@@ -105,6 +108,8 @@ fun PageListScreen(
     fun toggleSelect(id: PageListItemId) {
         if (id in selectedItems) selectedItems.remove(id) else selectedItems.add(id)
     }
+
+    val haptic = LocalHapticFeedback.current
 
     // "已处理" = pages that have been OCR'd (recognized text + page number).
     val ocredPages = remember(book.pages, sortMode) {
@@ -321,13 +326,17 @@ fun PageListScreen(
                                 .background(Accent)
                                 .combinedClickable(
                                     onClick = onCapture,
-                                    onLongClick = { addMenuOpen = true },
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        addMenuOpen = true
+                                    },
                                 )
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                         )
                         DropdownMenu(
                             expanded = addMenuOpen,
                             onDismissRequest = { addMenuOpen = false },
+                            offset = DpOffset(x = 0.dp, y = (-6).dp),
                         ) {
                             DropdownMenuItem(
                                 text = { Text("拍照") },
