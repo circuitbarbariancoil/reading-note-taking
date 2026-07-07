@@ -261,6 +261,43 @@ class BookRepository(
         }
     }
 
+    /**
+     * Import one rendered image (e.g. a PDF page) directly as a numbered Page
+     * without OCR. The bytes are downscaled to the archive size and stored as
+     * the page's archive image; OCR can be run later via [ocrExistingPage].
+     * Throws [DuplicatePageNumberException] if the number is already taken.
+     */
+    suspend fun importPageImage(
+        book: Book,
+        sourceBytes: ByteArray,
+        pageNumber: Int,
+    ): Book = withContext(Dispatchers.IO) {
+        val archiveWebp = ImageProcessing.toArchiveWebp(ImageProcessing.decode(sourceBytes))
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            if (base.pages.any { it.page == pageNumber }) {
+                throw DuplicatePageNumberException(pageNumber)
+            }
+            val now = utcNow()
+            val archiveRelPath = "pages/p%04d_archive.webp".format(pageNumber)
+            saveArchiveImage(base.uid, archiveRelPath, archiveWebp)
+            val page = Page(
+                page = pageNumber,
+                archiveImage = archiveRelPath,
+                ocrText = null,
+                addedAt = now,
+            )
+            val updated = base.copy(
+                updatedAt = now,
+                pages = (base.pages + page).sortedBy { it.page },
+            )
+            saveBook(updated)
+            enqueuePageArchiveUpload(updated, page)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /** Run OCR on an existing page's archive image, keeping its page number. */
     suspend fun ocrExistingPage(
         book: Book,

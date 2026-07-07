@@ -11,8 +11,11 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.android.Auth
@@ -29,8 +32,10 @@ import com.readingnotes.app.ui.CaptureScreen
 import com.readingnotes.app.ui.EntryBrowserScreen
 import com.readingnotes.app.ui.EntryEditor
 import com.readingnotes.app.ui.OcrJobState
+import com.readingnotes.app.pdf.PdfSource
 import com.readingnotes.app.ui.PageNumberSheet
 import com.readingnotes.app.ui.PageListScreen
+import com.readingnotes.app.ui.PdfImportScreen
 import com.readingnotes.app.ui.PaletteScreen
 import com.readingnotes.app.ui.ProviderSettingsScreen
 import com.readingnotes.app.ui.SettingsScreen
@@ -54,6 +59,13 @@ class MainActivity : ComponentActivity() {
             return@registerForActivityResult
         }
         viewModel.importBackup(inputStream)
+    }
+
+    private val pdfPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        viewModel.openPdfImport(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,6 +120,10 @@ class MainActivity : ComponentActivity() {
                     else ShellScreen.Workbench
                 }
                 ShellScreen.Capture -> if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
+                ShellScreen.PdfImport -> {
+                    viewModel.pdfImportUri = null
+                    ShellScreen.PageList
+                }
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
                 ShellScreen.BookShelf -> ShellScreen.BookShelf
@@ -156,7 +172,9 @@ class MainActivity : ComponentActivity() {
                             viewModel.currentScreen = ShellScreen.Workbench
                         },
                         onCapture = { viewModel.openCapture(fromWorkbench = false) },
+                        onImportPdf = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                         onBatchOcr = { viewModel.batchOcr() },
+                        onBatchOcrPages = { viewModel.batchOcrPages() },
                         onBack = {
                             viewModel.onEnterBookShelf()
                             viewModel.currentScreen = ShellScreen.BookShelf
@@ -197,6 +215,36 @@ class MainActivity : ComponentActivity() {
                             viewModel.currentScreen = if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                         },
                     )
+                }
+            }
+
+            ShellScreen.PdfImport -> {
+                val book = viewModel.activeBook
+                val uri = viewModel.pdfImportUri
+                if (book == null || uri == null) {
+                    viewModel.currentScreen = ShellScreen.PageList
+                } else {
+                    val context = LocalContext.current
+                    val source = remember(uri) {
+                        runCatching { PdfSource.open(context, uri) }.getOrNull()
+                    }
+                    DisposableEffect(source) {
+                        onDispose { source?.close() }
+                    }
+                    if (source == null) {
+                        LaunchedEffect(uri) {
+                            viewModel.ocrErrorMessage = "无法打开 PDF 文件"
+                            viewModel.cancelPdfImport()
+                        }
+                    } else {
+                        PdfImportScreen(
+                            source = source,
+                            onCancel = { viewModel.cancelPdfImport() },
+                            onImport = { fromPage, toPage, startPageNumber ->
+                                viewModel.importPdf(uri, fromPage, toPage, startPageNumber)
+                            },
+                        )
+                    }
                 }
             }
 

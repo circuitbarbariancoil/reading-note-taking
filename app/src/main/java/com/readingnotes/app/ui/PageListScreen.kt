@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -76,7 +78,9 @@ fun PageListScreen(
     ocrStatus: Map<String, OcrJobState>,
     onOpenPage: (Page) -> Unit,
     onCapture: () -> Unit,
+    onImportPdf: () -> Unit,
     onBatchOcr: () -> Unit,
+    onBatchOcrPages: () -> Unit,
     onBack: () -> Unit,
     onOcrCapture: (Capture) -> Unit,
     processItems: List<ProcessItem> = emptyList(),
@@ -94,6 +98,7 @@ fun PageListScreen(
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
     var assignPageDialog by remember { mutableStateOf<Capture?>(null) }
+    var addMenuOpen by remember { mutableStateOf(false) }
     val selectedItems = remember { mutableStateListOf<PageListItemId>() }
     val selectMode = selectedItems.isNotEmpty()
     var confirmDelete by remember { mutableStateOf(false) }
@@ -205,8 +210,26 @@ fun PageListScreen(
             ) {
                 // Processed pages section
                 if (sortedPages.isNotEmpty()) {
+                    val unOcredPages = book.pages.count { it.ocrText.isNullOrBlank() && it.archiveImage != null }
                     item(span = { GridItemSpan(3) }) {
-                        Text("已处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("已处理", fontSize = 12.sp, color = SumiSoft)
+                            Spacer(Modifier.weight(1f))
+                            if (unOcredPages > 0) {
+                                Text(
+                                    "OCR 未识别页 ($unOcredPages)",
+                                    fontSize = 12.sp,
+                                    color = Accent,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(onClick = onBatchOcrPages)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
                     }
                     itemsIndexed(sortedPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
                         val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
@@ -286,16 +309,40 @@ fun PageListScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Spacer(Modifier.weight(1f))
-                    Text(
-                        "＋ 拍照",
-                        fontSize = 14.sp,
-                        color = Color.White,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Accent)
-                            .clickable(onClick = onCapture)
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
+                    Box {
+                        Text(
+                            "＋ 拍照",
+                            fontSize = 14.sp,
+                            color = Color.White,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Accent)
+                                .combinedClickable(
+                                    onClick = onCapture,
+                                    onLongClick = { addMenuOpen = true },
+                                )
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                        DropdownMenu(
+                            expanded = addMenuOpen,
+                            onDismissRequest = { addMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("拍照") },
+                                onClick = {
+                                    addMenuOpen = false
+                                    onCapture()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("导入 PDF") },
+                                onClick = {
+                                    addMenuOpen = false
+                                    onImportPdf()
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }

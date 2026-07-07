@@ -2,6 +2,7 @@ package com.readingnotes.app
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -26,6 +27,8 @@ import com.readingnotes.app.model.Page
 import com.readingnotes.app.ocr.LlmProvider
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.ocr.ProviderConfig
+import com.readingnotes.app.image.ImageProcessing
+import com.readingnotes.app.pdf.PdfSource
 import com.readingnotes.app.repository.BookRepository
 import com.readingnotes.app.repository.DuplicatePageNumberException
 import com.readingnotes.app.repository.ProcessOutcome
@@ -54,6 +57,7 @@ enum class ShellScreen {
     Palette,
     EntryBrowser,
     EntryEditor,
+    PdfImport,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -80,6 +84,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var ocrErrorMessage by mutableStateOf<String?>(null)
     var entryBrowserBookUid by mutableStateOf<String?>(null)
     var captureFromWorkbench = false
+    var pdfImportUri by mutableStateOf<Uri?>(null)
     var captureShotCount by mutableStateOf(0)
     var captureSaving by mutableStateOf(false)
     var syncPendingCount by mutableStateOf(0)
@@ -227,6 +232,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         captureFromWorkbench = fromWorkbench
         captureShotCount = 0
         currentScreen = ShellScreen.Capture
+    }
+
+    fun openPdfImport(uri: Uri) {
+        pdfImportUri = uri
+        currentScreen = ShellScreen.PdfImport
+    }
+
+    fun cancelPdfImport() {
+        pdfImportUri = null
+        currentScreen = ShellScreen.PageList
+    }
+
+    /**
+     * Import a contiguous range of PDF pages (1-based, inclusive) as numbered
+     * Pages without OCR. Each page is rendered at archive resolution, stored as
+     * the page's archive image, and assigned [startPageNumber] + offset. Runs OCR
+     * later via [batchOcrPages]. Reuses the processing queue for progress.
+     */
+    fun importPdf(uri: Uri, fromPage: Int, toPage: Int, startPageNumber: Int) {
+        val book = activeBook ?: return
+        val lo = minOf(fromPage, toPage)
+        val hi = maxOf(fromPage, toPage)
+        pdfImportUri = null
+        currentScreen = ShellScreen.PageList
+        queueCollapsed = false
+        startNewBatchIfIdle()
+        viewModelScope.launch {
+            val source = try {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { PdfSource.open(getApplication(), uri) }
+            } catch (t: Throwable) {
+                ocrErrorMessage = "无法打开 PDF: ${t.message?.take(60) ?: "未知错误"}"
+                return@launch
+            }
+            try {
+                var current = activeBook ?: book
+                var pageNumber = startPageNumber
+                for (pdfPage in lo..hi) {
+                    val itemId = "pdf-$pdfPage"
+                    upsertProcessItem(processQueue, itemId, ProcessStep.Saving, message = "PDF 第 $pdfPage 页 → 第 $pageNumber 页")
+                    try {
+                        val bytes = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                            source.renderJpeg(pdfPage - 1, ImageProcessing.ARCHIVE_LONG_EDGE)
+                        }
+                        current = bookRepository.importPageImage(current, bytes, pageNumber)
+                        activeBook = current
+                        upsertProcessItem(processQueue, itemId, ProcessStep.Done, message = "第 $pageNumber 页")
+                        pageNumber++
+                    } catch (e: DuplicatePageNumberException) {
+                        upsertProcessItem(processQueue, itemId, ProcessStep.Failed, message = "第 $pageNumber 页已存在，跳过")
+                        pageNumber++
+                    } catch (t: Throwable) {
+                        upsertProcessItem(processQueue, itemId, ProcessStep.Failed, message = t.message?.take(60) ?: "导入失败")
+                    }
+                }
+                refreshBooks()
+                syncToDropbox(current)
+            } finally {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { source.close() }
+            }
+        }
     }
 
     fun saveShot(bytes: ByteArray) {
@@ -410,6 +475,94 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     runOcrCapture(capture, jumpToPage = false)
                 }
             }
+        }
+    }
+
+    /** Batch-OCR every imported/numbered page that has no OCR text yet. */
+    fun batchOcrPages() {
+        queueCollapsed = false
+        if (isMonthlyApiBudgetExceeded()) {
+            showMonthlyApiBudgetError()
+            return
+        }
+        if (!appSettings.hasAnyProvider) {
+            ocrErrorMessage = "未配置 OCR 服务（去设置添加）"
+            return
+        }
+        startNewBatchIfIdle()
+        val config = appSettings.providerConfig
+        val usable = config.usableProviders
+        val parallel = config.parallelOcr && usable.size > 1
+
+        viewModelScope.launch {
+            val pending = activeBook?.pages
+                ?.filter { it.ocrText.isNullOrBlank() && it.archiveImage != null }
+                .orEmpty()
+            pending.forEach { page -> upsertProcessItem(processQueue, "page-${page.page}", ProcessStep.Queued) }
+
+            if (parallel) {
+                val channel = kotlinx.coroutines.channels.Channel<Page>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                for (page in pending) channel.send(page)
+                channel.close()
+                coroutineScope {
+                    val workers = usable.map { provider ->
+                        async {
+                            for (page in channel) {
+                                if (isMonthlyApiBudgetExceeded()) {
+                                    showMonthlyApiBudgetError()
+                                    break
+                                }
+                                runOcrPage(page, provider)
+                            }
+                        }
+                    }
+                    workers.awaitAll()
+                }
+                activeBook?.uid?.let { uid ->
+                    activeBook = bookRepository.loadBook(uid) ?: activeBook
+                }
+            } else {
+                for (page in pending) {
+                    if (isMonthlyApiBudgetExceeded()) {
+                        showMonthlyApiBudgetError()
+                        break
+                    }
+                    runOcrPage(page, null)
+                }
+            }
+        }
+    }
+
+    private suspend fun runOcrPage(page: Page, assignedProvider: LlmProvider?) {
+        val book = activeBook ?: return
+        val key = appSettings.geminiApiKey.orEmpty()
+        val statusKey = "page-${page.page}"
+        val effectiveConfig = if (assignedProvider != null) {
+            ProviderConfig(providers = listOf(assignedProvider), activeIndex = 0, fallbackOnError = false)
+        } else {
+            appSettings.providerConfig
+        }
+        ocrStatus[statusKey] = OcrJobState.Running
+        upsertProcessItem(processQueue, statusKey, ProcessStep.Ocr, providerName = assignedProvider?.name)
+        try {
+            val updated = bookRepository.ocrExistingPage(
+                book,
+                page,
+                key,
+                providerConfig = effectiveConfig,
+                onApiCall = { providerId -> recordApiCall(providerId) },
+            )
+            ocrStatus.remove(statusKey)
+            activeBook = updated
+            ocrErrorMessage = null
+            refreshBooks()
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Done)
+            syncToDropbox(updated)
+        } catch (t: Throwable) {
+            ocrStatus[statusKey] = OcrJobState.Failed
+            setOcrFailure(book.uid, page.page, "OCR 失败: ${t.message?.take(80) ?: "未知错误"}")
+            upsertProcessItem(processQueue, statusKey, ProcessStep.Failed, message = t.message?.take(80) ?: "未知错误")
+            OcrRetryWorker.enqueuePageOcr(getApplication(), book.uid, page.page)
         }
     }
 
