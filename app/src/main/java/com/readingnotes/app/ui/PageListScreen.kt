@@ -336,7 +336,7 @@ fun PageListScreen(
                         DropdownMenu(
                             expanded = addMenuOpen,
                             onDismissRequest = { addMenuOpen = false },
-                            offset = DpOffset(x = 0.dp, y = (-20).dp),
+                            offset = DpOffset(x = 0.dp, y = (-56).dp),
                         ) {
                             DropdownMenuItem(
                                 text = { Text("拍照") },
