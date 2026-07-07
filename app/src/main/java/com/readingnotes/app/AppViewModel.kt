@@ -62,7 +62,8 @@ enum class ShellScreen {
     EntryEditor,
     PdfImport,
     Toc,
-    TocReview,
+    TocEditor,
+    TocCapture,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -112,11 +113,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var entryBrowserOrigin by mutableStateOf(ShellScreen.BookShelf)
     val entryBrowserListState = androidx.compose.foundation.lazy.LazyListState()
 
-    /** AI-parsed TOC items awaiting review/confirmation on the TocReview screen. */
-    var tocReviewItems by mutableStateOf<List<TocItem>>(emptyList())
+    /** Seed sections loaded into the unified TOC outline editor. */
+    var tocEditorSeed by mutableStateOf<List<Section>>(emptyList())
+    /** When true, the editor offers 替换/追加 (AI result on top of an existing TOC). */
+    var tocEditorAllowAppend by mutableStateOf(false)
     /** True while a 目录 extraction API call is in flight. */
     var tocGenerating by mutableStateOf(false)
     var tocError by mutableStateOf<String?>(null)
+    /** Transient buffer of 目录-page photos, held only until extraction, never stored. */
+    val tocCaptureBuffer = mutableStateListOf<ByteArray>()
+    /** True when the active PDF picker/import flow targets 目录 extraction. */
+    var pdfImportForToc by mutableStateOf(false)
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -254,6 +261,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openPdfImport(uri: Uri) {
+        pdfImportForToc = false
+        pdfImportUri = uri
+        currentScreen = ShellScreen.PdfImport
+    }
+
+    fun openPdfImportForToc(uri: Uri) {
+        pdfImportForToc = true
         pdfImportUri = uri
         currentScreen = ShellScreen.PdfImport
     }
@@ -613,9 +627,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         currentScreen = ShellScreen.PageList
     }
 
-    fun cancelTocReview() {
-        tocReviewItems = emptyList()
+    /** Open the unified outline editor seeded with the book's current TOC. */
+    fun openTocEditor() {
+        tocEditorSeed = activeBook?.sections.orEmpty()
+        tocEditorAllowAppend = false
+        currentScreen = ShellScreen.TocEditor
+    }
+
+    fun cancelTocEditor() {
+        tocEditorSeed = emptyList()
+        tocEditorAllowAppend = false
         currentScreen = ShellScreen.Toc
+    }
+
+    /** Save the edited outline; when [append], keep the existing TOC and add to it. */
+    fun saveTocFromEditor(sections: List<Section>, append: Boolean) {
+        val book = activeBook ?: return
+        val merged = if (append) book.sections + sections else sections
+        tocEditorSeed = emptyList()
+        tocEditorAllowAppend = false
+        currentScreen = ShellScreen.Toc
+        saveSections(merged)
     }
 
     /** Persist the book's table of contents, then sync. */
@@ -629,11 +661,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- AI 目录 generation from transient 拍照 / PDF images (never stored) ----
+
+    fun openTocCapture() {
+        tocCaptureBuffer.clear()
+        tocError = null
+        currentScreen = ShellScreen.TocCapture
+    }
+
+    fun addTocShot(bytes: ByteArray) {
+        tocCaptureBuffer.add(bytes)
+    }
+
+    /** Finish 目录 capture: extract from the buffered photos, then discard them. */
+    fun finishTocCapture() {
+        val images = tocCaptureBuffer.toList()
+        tocCaptureBuffer.clear()
+        if (images.isEmpty()) {
+            currentScreen = ShellScreen.Toc
+            return
+        }
+        currentScreen = ShellScreen.Toc
+        generateTocFromImages(images)
+    }
+
+    fun cancelTocCapture() {
+        tocCaptureBuffer.clear()
+        currentScreen = ShellScreen.Toc
+    }
+
     /**
-     * Run AI 目录 extraction over the selected pages/captures (by page number /
-     * capture id). On success, populates [tocReviewItems] and opens TocReview.
+     * Run AI 目录 extraction over in-memory images. On success, seeds the unified
+     * editor and opens it; images are the caller's transient bytes (never stored).
      */
-    fun generateToc(pageNumbers: List<Int>, captureIds: List<String>) {
+    fun generateTocFromImages(images: List<ByteArray>) {
         val book = activeBook ?: return
         if (!appSettings.hasAnyProvider) {
             tocError = "未配置 OCR 服务（去设置添加）"
@@ -644,40 +705,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             tocError = ocrErrorMessage
             return
         }
+        if (images.isEmpty()) {
+            tocError = "没有目录页图片"
+            return
+        }
         tocGenerating = true
         tocError = null
         viewModelScope.launch {
             try {
-                val images = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    val out = mutableListOf<ByteArray>()
-                    pageNumbers.forEach { pn ->
-                        val page = book.pages.firstOrNull { it.page == pn } ?: return@forEach
-                        val path = bookRepository.archiveImagePath(book, page) ?: return@forEach
-                        runCatching {
-                            out.add(ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(path).readBytes())))
-                        }
+                val downscaled = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    images.mapNotNull { bytes ->
+                        runCatching { ImageProcessing.toOcrJpeg(ImageProcessing.decode(bytes)) }.getOrNull()
                     }
-                    captureIds.forEach { cid ->
-                        val cap = book.captures.firstOrNull { it.id == cid } ?: return@forEach
-                        runCatching {
-                            out.add(ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(cap.imagePath).readBytes())))
-                        }
-                    }
-                    out
-                }
-                if (images.isEmpty()) {
-                    tocError = "未选择目录页图片"
-                    tocGenerating = false
-                    return@launch
                 }
                 val items = OcrDispatcher(appSettings.providerConfig)
-                    .extractToc(images, onApiCall = { providerId -> recordApiCall(providerId) })
+                    .extractToc(downscaled, onApiCall = { providerId -> recordApiCall(providerId) })
                 tocGenerating = false
                 if (items.isEmpty()) {
                     tocError = "未能从图片中识别出目录，请换清晰的目录页重试"
                 } else {
-                    tocReviewItems = items
-                    currentScreen = ShellScreen.TocReview
+                    tocEditorSeed = items.map { item ->
+                        Section(
+                            id = java.util.UUID.randomUUID().toString().take(8),
+                            title = item.title,
+                            startPage = item.page,
+                            level = item.level,
+                        )
+                    }
+                    tocEditorAllowAppend = book.sections.isNotEmpty()
+                    currentScreen = ShellScreen.TocEditor
                 }
             } catch (t: Throwable) {
                 tocGenerating = false

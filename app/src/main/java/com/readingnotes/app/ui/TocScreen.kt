@@ -1,8 +1,6 @@
 package com.readingnotes.app.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,40 +11,31 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.readingnotes.app.model.Book
 import com.readingnotes.app.model.Section
-import com.readingnotes.app.repository.BookRepository
 import com.readingnotes.app.ui.theme.Accent
 import com.readingnotes.app.ui.theme.Hairline
 import com.readingnotes.app.ui.theme.Paper
@@ -54,26 +43,24 @@ import com.readingnotes.app.ui.theme.PaperPanel
 import com.readingnotes.app.ui.theme.Sumi
 import com.readingnotes.app.ui.theme.SumiSoft
 
-private val LEVEL_LABELS = listOf("部", "章", "节")
-
-private fun levelLabel(level: Int): String = LEVEL_LABELS.getOrElse(level - 1) { "级$level" }
-
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * 目录 navigation + entry screen. Shows the current outline (tap a row to jump
+ * to that page) and routes to the unified outline editor ([onEdit]) or to AI
+ * generation from transient photos ([onCapture]) / PDF pages ([onImportPdf]).
+ */
 @Composable
 fun TocScreen(
     book: Book,
-    repository: BookRepository,
     generating: Boolean,
     errorText: String?,
     onBack: () -> Unit,
-    onSaveSections: (List<Section>) -> Unit,
-    onGenerate: (List<Int>, List<String>) -> Unit,
+    onEdit: () -> Unit,
+    onCapture: () -> Unit,
+    onImportPdf: () -> Unit,
     onJumpToPage: (Int) -> Unit,
 ) {
     val sections = book.sections
-    var editing by remember { mutableStateOf<Section?>(null) }
-    var addingNew by remember { mutableStateOf(false) }
-    var picking by remember { mutableStateOf(false) }
+    var choosingSource by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().background(Paper)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -101,6 +88,18 @@ fun TocScreen(
                         color = SumiSoft,
                     )
                 }
+                if (sections.isNotEmpty()) {
+                    Text(
+                        "编辑",
+                        fontSize = 14.sp,
+                        color = Accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .border(1.dp, Hairline, RoundedCornerShape(20.dp))
+                            .clickable(onClick = onEdit)
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
             }
 
             if (errorText != null) {
@@ -120,7 +119,7 @@ fun TocScreen(
                 ) {
                     Text("这本书还没有目录", fontSize = 14.sp, color = SumiSoft)
                     Spacer(Modifier.size(6.dp))
-                    Text("用 AI 从目录页生成，或手动添加章节", fontSize = 12.sp, color = SumiSoft)
+                    Text("用 AI 从目录页生成，或手动编写", fontSize = 12.sp, color = SumiSoft)
                 }
             } else {
                 LazyColumn(
@@ -131,7 +130,7 @@ fun TocScreen(
                         SectionRow(
                             section = section,
                             onClick = { onJumpToPage(section.startPage) },
-                            onLongClick = { editing = section },
+                            onLongClick = onEdit,
                         )
                     }
                 }
@@ -151,17 +150,17 @@ fun TocScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .border(1.dp, Hairline, RoundedCornerShape(20.dp))
-                        .clickable { picking = true }
+                        .clickable { choosingSource = true }
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
                 Text(
-                    "＋ 添加章节",
+                    if (sections.isEmpty()) "＋ 手动编写" else "＋ 编辑目录",
                     fontSize = 14.sp,
                     color = Color.White,
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .background(Accent)
-                        .clickable { addingNew = true }
+                        .clickable(onClick = onEdit)
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
@@ -187,58 +186,71 @@ fun TocScreen(
         }
     }
 
-    if (picking) {
-        TocSourcePicker(
-            book = book,
-            repository = repository,
-            onCancel = { picking = false },
-            onConfirm = { pageNumbers, captureIds ->
-                picking = false
-                onGenerate(pageNumbers, captureIds)
+    if (choosingSource) {
+        SourceChooserDialog(
+            onDismiss = { choosingSource = false },
+            onCapture = {
+                choosingSource = false
+                onCapture()
+            },
+            onImportPdf = {
+                choosingSource = false
+                onImportPdf()
             },
         )
     }
+}
 
-    if (addingNew) {
-        val defaultPage = (sections.maxOfOrNull { it.startPage } ?: 0) + 1
-        SectionEditDialog(
-            initial = null,
-            defaultPage = defaultPage,
-            onDismiss = { addingNew = false },
-            onConfirm = { title, startPage, level ->
-                addingNew = false
-                onSaveSections(
-                    sections + Section(
-                        id = java.util.UUID.randomUUID().toString().take(8),
-                        title = title,
-                        startPage = startPage,
-                        level = level,
-                    ),
-                )
-            },
-            onDelete = null,
-        )
+@Composable
+private fun SourceChooserDialog(
+    onDismiss: () -> Unit,
+    onCapture: () -> Unit,
+    onImportPdf: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(Paper)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("目录页来源", fontFamily = FontFamily.Serif, fontSize = 16.sp, color = Sumi)
+            Text(
+                "拍照或选 PDF 中的目录页，AI 识别后图片即丢弃，不会存进书里。",
+                fontSize = 12.sp,
+                color = SumiSoft,
+            )
+            ChooserButton("📷 拍照目录页", onCapture)
+            ChooserButton("📄 从 PDF 选目录页", onImportPdf)
+            Text(
+                "取消",
+                fontSize = 13.sp,
+                color = SumiSoft,
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
     }
+}
 
-    editing?.let { target ->
-        SectionEditDialog(
-            initial = target,
-            defaultPage = target.startPage,
-            onDismiss = { editing = null },
-            onConfirm = { title, startPage, level ->
-                editing = null
-                onSaveSections(
-                    sections.map {
-                        if (it.id == target.id) it.copy(title = title, startPage = startPage, level = level) else it
-                    },
-                )
-            },
-            onDelete = {
-                editing = null
-                onSaveSections(sections.filterNot { it.id == target.id })
-            },
-        )
-    }
+@Composable
+private fun ChooserButton(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        fontSize = 15.sp,
+        color = Sumi,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(PaperPanel)
+            .border(1.dp, Hairline, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -265,168 +277,5 @@ private fun SectionRow(
             modifier = Modifier.weight(1f),
         )
         Text("P${section.startPage}", fontSize = 12.sp, color = SumiSoft)
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun TocSourcePicker(
-    book: Book,
-    repository: BookRepository,
-    onCancel: () -> Unit,
-    onConfirm: (List<Int>, List<String>) -> Unit,
-) {
-    val selectedPages = remember { mutableStateListOf<Int>() }
-    val selectedCaptures = remember { mutableStateListOf<String>() }
-    val pages = remember(book.pages) { book.pages.sortedBy { it.page } }
-    val count = selectedPages.size + selectedCaptures.size
-
-    Box(modifier = Modifier.fillMaxSize().background(Paper)) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "‹",
-                    fontSize = 26.sp,
-                    color = SumiSoft,
-                    modifier = Modifier.clickable(onClick = onCancel).padding(end = 8.dp),
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "选择目录页",
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 18.sp,
-                        color = Sumi,
-                    )
-                    Text("勾选包含目录的页（可多选）", fontSize = 12.sp, color = SumiSoft)
-                }
-            }
-
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (pages.isNotEmpty()) {
-                    item(span = { GridItemSpan(3) }) {
-                        Text("页", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
-                    }
-                    items(pages, key = { "p-${it.page}-${it.addedAt}" }) { page ->
-                        val path = repository.archiveImagePath(book, page)
-                        val selected = page.page in selectedPages
-                        SourceThumbnail(
-                            imagePath = path,
-                            label = "P${page.page}",
-                            selected = selected,
-                            onClick = {
-                                if (selected) selectedPages.remove(page.page) else selectedPages.add(page.page)
-                            },
-                        )
-                    }
-                }
-                if (book.captures.isNotEmpty()) {
-                    item(span = { GridItemSpan(3) }) {
-                        Text("未处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
-                    }
-                    items(book.captures, key = { "c-${it.id}" }) { capture ->
-                        val selected = capture.id in selectedCaptures
-                        SourceThumbnail(
-                            imagePath = capture.imagePath,
-                            label = null,
-                            selected = selected,
-                            onClick = {
-                                if (selected) selectedCaptures.remove(capture.id) else selectedCaptures.add(capture.id)
-                            },
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Spacer(Modifier.weight(1f))
-                val enabled = count > 0
-                Text(
-                    if (enabled) "生成目录 ($count)" else "生成目录",
-                    fontSize = 14.sp,
-                    color = if (enabled) Color.White else Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(if (enabled) Accent else SumiSoft.copy(alpha = 0.4f))
-                        .clickable(enabled = enabled) {
-                            onConfirm(selectedPages.toList(), selectedCaptures.toList())
-                        }
-                        .padding(horizontal = 18.dp, vertical = 8.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SourceThumbnail(
-    imagePath: String?,
-    label: String?,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val bitmap = remember(imagePath) {
-        if (imagePath == null) null else runCatching { BitmapFactory.decodeFile(imagePath) }.getOrNull()
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(0.72f)
-            .clip(RoundedCornerShape(8.dp))
-            .background(PaperPanel)
-            .border(
-                width = if (selected) 2.dp else 1.dp,
-                color = if (selected) Accent else Hairline,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .clickable(onClick = onClick),
-    ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop,
-            )
-        }
-        if (label != null) {
-            Text(
-                label,
-                fontSize = 11.sp,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(4.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color.Black.copy(alpha = 0.5f))
-                    .padding(horizontal = 5.dp, vertical = 2.dp),
-            )
-        }
-        if (selected) {
-            Text(
-                "✓",
-                fontSize = 13.sp,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .background(Accent),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            )
-        }
     }
 }

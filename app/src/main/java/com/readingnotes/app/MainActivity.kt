@@ -68,6 +68,13 @@ class MainActivity : ComponentActivity() {
         viewModel.openPdfImport(uri)
     }
 
+    private val tocPdfPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        viewModel.openPdfImportForToc(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handleIncomingIntent(intent)
@@ -121,13 +128,15 @@ class MainActivity : ComponentActivity() {
                 }
                 ShellScreen.Capture -> if (viewModel.captureFromWorkbench) ShellScreen.Workbench else ShellScreen.PageList
                 ShellScreen.PdfImport -> {
+                    val target = if (viewModel.pdfImportForToc) ShellScreen.Toc else ShellScreen.PageList
                     viewModel.pdfImportUri = null
-                    ShellScreen.PageList
+                    target
                 }
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
                 ShellScreen.Toc -> ShellScreen.PageList
-                ShellScreen.TocReview -> ShellScreen.Toc
+                ShellScreen.TocEditor -> ShellScreen.Toc
+                ShellScreen.TocCapture -> ShellScreen.Toc
                 ShellScreen.BookShelf -> ShellScreen.BookShelf
             }
         }
@@ -213,12 +222,12 @@ class MainActivity : ComponentActivity() {
                 } else {
                     com.readingnotes.app.ui.TocScreen(
                         book = book,
-                        repository = viewModel.bookRepository,
                         generating = viewModel.tocGenerating,
                         errorText = viewModel.tocError,
                         onBack = { viewModel.closeToc() },
-                        onSaveSections = { sections -> viewModel.saveSections(sections) },
-                        onGenerate = { pageNumbers, captureIds -> viewModel.generateToc(pageNumbers, captureIds) },
+                        onEdit = { viewModel.openTocEditor() },
+                        onCapture = { viewModel.openTocCapture() },
+                        onImportPdf = { tocPdfPickerLauncher.launch(arrayOf("application/pdf")) },
                         onJumpToPage = { pageNumber ->
                             val idx = book.pages.indexOfFirst { it.page >= pageNumber }
                             if (idx >= 0) {
@@ -232,29 +241,31 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            ShellScreen.TocReview -> {
+            ShellScreen.TocEditor -> {
                 val book = viewModel.activeBook
                 if (book == null) {
                     viewModel.currentScreen = ShellScreen.BookShelf
                 } else {
-                    com.readingnotes.app.ui.TocReviewScreen(
-                        items = viewModel.tocReviewItems,
-                        hasExisting = book.sections.isNotEmpty(),
-                        onCancel = { viewModel.cancelTocReview() },
-                        onConfirm = { items, replace ->
-                            val newSections = items.map { item ->
-                                com.readingnotes.app.model.Section(
-                                    id = java.util.UUID.randomUUID().toString().take(8),
-                                    title = item.title,
-                                    startPage = item.page,
-                                    level = item.level,
-                                )
-                            }
-                            val merged = if (replace) newSections else book.sections + newSections
-                            viewModel.saveSections(merged)
-                            viewModel.tocReviewItems = emptyList()
-                            viewModel.currentScreen = ShellScreen.Toc
-                        },
+                    com.readingnotes.app.ui.TocEditorScreen(
+                        seed = viewModel.tocEditorSeed,
+                        allowAppend = viewModel.tocEditorAllowAppend,
+                        onCancel = { viewModel.cancelTocEditor() },
+                        onSave = { sections, append -> viewModel.saveTocFromEditor(sections, append) },
+                    )
+                }
+            }
+
+            ShellScreen.TocCapture -> {
+                val book = viewModel.activeBook
+                if (book == null) {
+                    viewModel.currentScreen = ShellScreen.BookShelf
+                } else {
+                    CaptureScreen(
+                        title = "拍目录页（识别后即丢弃）",
+                        shotCount = viewModel.tocCaptureBuffer.size,
+                        saving = false,
+                        onShot = { bytes -> viewModel.addTocShot(bytes) },
+                        onClose = { viewModel.finishTocCapture() },
                     )
                 }
             }
@@ -297,9 +308,22 @@ class MainActivity : ComponentActivity() {
                     } else {
                         PdfImportScreen(
                             source = source,
-                            onCancel = { viewModel.cancelPdfImport() },
+                            onCancel = {
+                                if (viewModel.pdfImportForToc) {
+                                    viewModel.pdfImportUri = null
+                                    viewModel.currentScreen = ShellScreen.Toc
+                                } else {
+                                    viewModel.cancelPdfImport()
+                                }
+                            },
                             onImport = { fromPage, toPage, startPageNumber ->
                                 viewModel.importPdf(uri, fromPage, toPage, startPageNumber)
+                            },
+                            forToc = viewModel.pdfImportForToc,
+                            onExtractToc = { images ->
+                                viewModel.pdfImportUri = null
+                                viewModel.currentScreen = ShellScreen.Toc
+                                viewModel.generateTocFromImages(images)
                             },
                         )
                     }

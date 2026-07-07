@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.mutableStateMapOf
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -71,15 +73,21 @@ private const val PREVIEW_LONG_EDGE = 1400
  * starting book page number (batch offset), then imports. Rendering is lazy and
  * cached so large PDFs stay responsive.
  */
+private const val TOC_OCR_LONG_EDGE = 1600
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PdfImportScreen(
     source: PdfSource,
     onCancel: () -> Unit,
     onImport: (fromPage: Int, toPage: Int, startPageNumber: Int) -> Unit,
+    forToc: Boolean = false,
+    onExtractToc: (List<ByteArray>) -> Unit = {},
 ) {
     val pageCount = remember(source) { source.pageCount }
     val thumbs = remember(source) { mutableStateMapOf<Int, ImageBitmap>() }
+    val scope = rememberCoroutineScope()
+    var rendering by remember { mutableStateOf(false) }
 
     var fromText by remember(source) { mutableStateOf("1") }
     var toText by remember(source) { mutableStateOf(pageCount.toString()) }
@@ -93,7 +101,8 @@ fun PdfImportScreen(
     val hi = if (fromNum != null && toNum != null) maxOf(fromNum, toNum) else null
     val count = if (lo != null && hi != null) hi - lo + 1 else if (lo != null) 1 else 0
     val startNum = startText.toIntOrNull()
-    val importEnabled = lo != null && hi != null && startNum != null
+    val rangeReady = lo != null && hi != null
+    val importEnabled = rangeReady && (forToc || startNum != null)
 
     fun tapPage(p: Int) {
         val f = fromText.toIntOrNull()
@@ -128,13 +137,17 @@ fun PdfImportScreen(
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "导入 PDF",
+                        if (forToc) "选目录页" else "导入 PDF",
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Medium,
                         fontSize = 18.sp,
                         color = Sumi,
                     )
-                    Text("共 $pageCount 页", fontSize = 12.sp, color = SumiSoft)
+                    Text(
+                        if (forToc) "选含目录的页 · 识别后即丢弃，不入库" else "共 $pageCount 页",
+                        fontSize = 12.sp,
+                        color = SumiSoft,
+                    )
                 }
                 Text(
                     "全部",
@@ -201,34 +214,59 @@ fun PdfImportScreen(
                         label = "到",
                         modifier = Modifier.weight(1f),
                     )
-                    NumberField(
-                        value = startText,
-                        onValueChange = { startText = it; startEdited = true },
-                        label = "起始页码",
-                        modifier = Modifier.weight(1.2f),
-                    )
+                    if (!forToc) {
+                        NumberField(
+                            value = startText,
+                            onValueChange = { startText = it; startEdited = true },
+                            label = "起始页码",
+                            modifier = Modifier.weight(1.2f),
+                        )
+                    }
                 }
 
-                val noteText = if (importEnabled && lo != null && hi != null && startNum != null) {
-                    val endNum = startNum + count - 1
-                    "将导入 $count 页（PDF 第 $lo–$hi 页）→ 书内第 $startNum–$endNum 页"
-                } else {
-                    "点缩略图选起止页，或直接填「从 / 到」"
+                val noteText = when {
+                    forToc && rangeReady && lo != null && hi != null ->
+                        "将用 PDF 第 $lo–$hi 页（$count 页）识别目录"
+                    !forToc && importEnabled && lo != null && hi != null && startNum != null -> {
+                        val endNum = startNum + count - 1
+                        "将导入 $count 页（PDF 第 $lo–$hi 页）→ 书内第 $startNum–$endNum 页"
+                    }
+                    else -> "点缩略图选起止页，或直接填「从 / 到」"
                 }
                 Text(noteText, fontSize = 12.sp, color = SumiSoft)
 
+                val label = when {
+                    rendering -> "识别中…"
+                    forToc && importEnabled -> "识别目录（$count 页）"
+                    forToc -> "识别目录"
+                    importEnabled -> "导入 $count 页"
+                    else -> "导入"
+                }
+                val btnEnabled = importEnabled && !rendering
                 Text(
-                    if (importEnabled) "导入 $count 页" else "导入",
+                    label,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (importEnabled) Color.White else SumiSoft.copy(alpha = 0.5f),
+                    color = if (btnEnabled) Color.White else SumiSoft.copy(alpha = 0.5f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(22.dp))
-                        .background(if (importEnabled) Accent else Color(0xFFDDD3C2))
-                        .clickable(enabled = importEnabled) {
-                            if (lo != null && hi != null && startNum != null) {
+                        .background(if (btnEnabled) Accent else Color(0xFFDDD3C2))
+                        .clickable(enabled = btnEnabled) {
+                            if (lo == null || hi == null) return@clickable
+                            if (forToc) {
+                                rendering = true
+                                scope.launch {
+                                    val images = withContext(Dispatchers.IO) {
+                                        (lo..hi).mapNotNull { p ->
+                                            runCatching { source.renderJpeg(p - 1, TOC_OCR_LONG_EDGE) }.getOrNull()
+                                        }
+                                    }
+                                    rendering = false
+                                    onExtractToc(images)
+                                }
+                            } else if (startNum != null) {
                                 onImport(lo, hi, startNum)
                             }
                         }
