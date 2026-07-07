@@ -87,6 +87,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var entryEditTarget by mutableStateOf<EntryEditTarget?>(null)
     var entryEditorFromBrowser by mutableStateOf(false)
     var workbenchFocus by mutableStateOf<IntRange?>(null)
+    /** True when [workbenchFocus] targets a plain excerpt (gray-underline jump, no block). */
+    var workbenchFocusIsExcerpt by mutableStateOf(false)
     var ocrErrorMessage by mutableStateOf<String?>(null)
     var entryBrowserBookUid by mutableStateOf<String?>(null)
     var captureFromWorkbench = false

@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
                         processItems = viewModel.processQueue,
                         onOpenPage = { page ->
                             viewModel.workbenchFocus = null
+                            viewModel.workbenchFocusIsExcerpt = false
                             viewModel.activePageIndex = book.pages.indexOf(page).coerceAtLeast(0)
                             viewModel.currentScreen = ShellScreen.Workbench
                         },
@@ -299,6 +300,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onBack = {
                             viewModel.workbenchFocus = null
+                            viewModel.workbenchFocusIsExcerpt = false
                             viewModel.activeBook = viewModel.bookRepository.loadBook(book.uid) ?: book
                             viewModel.currentScreen = ShellScreen.PageList
                         },
@@ -315,6 +317,7 @@ class MainActivity : ComponentActivity() {
                         onCollapseQueue = { viewModel.queueCollapsed = true },
                         onRefreshBooks = { viewModel.refreshBooks() },
                         focusRange = viewModel.workbenchFocus,
+                        focusIsExcerpt = viewModel.workbenchFocusIsExcerpt,
                     )
                 }
             }
@@ -423,6 +426,7 @@ class MainActivity : ComponentActivity() {
                             onViewOriginal = {
                                 if (entry.page != null) {
                                     viewModel.workbenchFocus = viewModel.locateEntrySource(book.pages.getOrNull(pageIndex)?.ocrText, entry)
+                                    viewModel.workbenchFocusIsExcerpt = entry.kind == com.readingnotes.app.model.EntryKind.excerpt
                                     viewModel.activePageIndex = pageIndex
                                     viewModel.currentScreen = ShellScreen.Workbench
                                 }

@@ -62,7 +62,16 @@ data class PageHighlight(
     val start: Int,
     val end: Int,
     val color: String,
-)
+) {
+    companion object {
+        /**
+         * Reserved, non-palette color used for plain excerpts. Rendered as a
+         * neutral gray fill block (no underline) to visually distinguish it from
+         * user highlights (which are colored underlines).
+         */
+        const val EXCERPT_COLOR = "excerpt"
+    }
+}
 
 enum class EntryKind { highlight, excerpt, note }
 
