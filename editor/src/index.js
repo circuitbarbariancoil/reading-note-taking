@@ -82,13 +82,14 @@ function touched(sel, from, to) {
   return false;
 }
 
-// True only when a selection endpoint (caret) lies within [from, to]. Unlike
-// touched(), a whole-document or otherwise large selection does NOT count: its
-// endpoints sit outside a mid-document span, so masked cloze stay masked until
-// the caret actually enters them.
+// True only when a selection endpoint (caret) lies strictly inside (from, to).
+// Boundaries are excluded so a collapsed caret resting at the span edge — e.g.
+// the default caret at position 0 sitting on a cloze that opens the document —
+// does not reveal it; and a whole-document/large selection (endpoints outside a
+// mid-document span) keeps masked cloze masked until the caret truly enters.
 function caretInside(sel, from, to) {
   for (const r of sel.ranges) {
-    if ((r.from >= from && r.from <= to) || (r.to >= from && r.to <= to)) return true;
+    if ((r.from > from && r.from < to) || (r.to > from && r.to < to)) return true;
   }
   return false;
 }
