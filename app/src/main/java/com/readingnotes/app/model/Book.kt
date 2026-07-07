@@ -24,6 +24,25 @@ data class Book(
     val pages: List<Page> = emptyList(),
     val captures: List<Capture> = emptyList(),
     val entries: List<Entry> = emptyList(),
+    /** Table of contents: chapter/section markers, ordered by [Section.startPage]. */
+    val sections: List<Section> = emptyList(),
+)
+
+/**
+ * One table-of-contents entry. A section spans from its [startPage] (a book page
+ * number, matching [Page.page]) until the next section's start; only the start is
+ * stored so ranges can never overlap or leave gaps. [level] gives hierarchy
+ * (1 = coarsest, e.g. 部/篇; 2 = 章; 3 = 節…).
+ */
+@Serializable
+data class Section(
+    val id: String,
+    val title: String,
+    val startPage: Int,
+    val level: Int = 1,
+    val note: String = "",
+    val createdAt: String = "",
+    val updatedAt: String = "",
 )
 
 /**

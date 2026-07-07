@@ -64,6 +64,46 @@ class OpenAiOcrClient(
         }
     }
 
+    /** Sends one or more 目录 images and returns the raw model text (JSON). */
+    suspend fun extractToc(images: List<ByteArray>): String = withContext(Dispatchers.IO) {
+        val content = JSONArray()
+        for (img in images) {
+            val b64 = android.util.Base64.encodeToString(img, android.util.Base64.NO_WRAP)
+            content.put(JSONObject().apply {
+                put("type", "image_url")
+                put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$b64"))
+            })
+        }
+        content.put(JSONObject().apply {
+            put("type", "text")
+            put("text", TocExtraction.PROMPT)
+        })
+        val body = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", content)
+            }))
+            put("max_tokens", 4096)
+        }.toString()
+
+        val url = "${baseUrl.trimEnd('/')}/v1/chat/completions"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(request).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw GeminiOcrClient.OcrException("OpenAI HTTP ${resp.code}: ${text.take(200)}")
+            }
+            parseResponse(text)
+        }
+    }
+
     private fun parseResponse(json: String): String {
         val root = JSONObject(json)
         val choices = root.optJSONArray("choices")

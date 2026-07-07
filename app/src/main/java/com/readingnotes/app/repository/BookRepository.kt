@@ -175,6 +175,18 @@ class BookRepository(
         }
     }
 
+    /** Replace the book's table of contents, then persist + sync. */
+    suspend fun updateSections(book: Book, sections: List<com.readingnotes.app.model.Section>): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val sorted = sections.sortedWith(compareBy({ it.startPage }, { it.level }))
+            val updated = base.copy(sections = sorted, updatedAt = utcNow())
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /**
      * Save a photo as a Capture (unprocessed) without running OCR.
      * Returns the updated book with the new capture appended.

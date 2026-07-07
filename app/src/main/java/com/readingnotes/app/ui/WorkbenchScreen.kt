@@ -168,6 +168,7 @@ fun WorkbenchScreen(
                     title = book.title,
                     author = book.author,
                     pageNo = page.page,
+                    sectionLabel = TocLayout.sectionFor(book.sections, page.page)?.title,
                     mode = mode,
                     onMode = { mode = it },
                     onCollapse = { toolbarCollapsed = true },
@@ -502,6 +503,7 @@ private fun TopBar(
     title: String,
     author: String,
     pageNo: Int,
+    sectionLabel: String?,
     mode: MainMode,
     onMode: (MainMode) -> Unit,
     onCollapse: () -> Unit,
@@ -517,8 +519,8 @@ private fun TopBar(
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(author.ifBlank { null }, "p.$pageNo").joinToString(" ・ "),
-                fontSize = 12.sp, color = SumiSoft,
+                listOfNotNull(author.ifBlank { null }, "p.$pageNo", sectionLabel).joinToString(" ・ "),
+                fontSize = 12.sp, color = SumiSoft, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
         ModeToggle(mode, onMode)

@@ -24,9 +24,12 @@ import com.readingnotes.app.model.EntryKind
 import com.readingnotes.app.model.HighlightPalette
 import com.readingnotes.app.model.MarkupText
 import com.readingnotes.app.model.Page
+import com.readingnotes.app.model.Section
 import com.readingnotes.app.ocr.LlmProvider
+import com.readingnotes.app.ocr.OcrDispatcher
 import com.readingnotes.app.ocr.OcrRetryWorker
 import com.readingnotes.app.ocr.ProviderConfig
+import com.readingnotes.app.ocr.TocItem
 import com.readingnotes.app.image.ImageProcessing
 import com.readingnotes.app.pdf.PdfSource
 import com.readingnotes.app.repository.BookRepository
@@ -58,6 +61,8 @@ enum class ShellScreen {
     EntryBrowser,
     EntryEditor,
     PdfImport,
+    Toc,
+    TocReview,
 }
 
 /** A capture whose OCR finished but produced no page number: ask the user. */
@@ -106,6 +111,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var notebookDraft by mutableStateOf<Entry?>(null)
     var entryBrowserOrigin by mutableStateOf(ShellScreen.BookShelf)
     val entryBrowserListState = androidx.compose.foundation.lazy.LazyListState()
+
+    /** AI-parsed TOC items awaiting review/confirmation on the TocReview screen. */
+    var tocReviewItems by mutableStateOf<List<TocItem>>(emptyList())
+    /** True while a 目录 extraction API call is in flight. */
+    var tocGenerating by mutableStateOf(false)
+    var tocError by mutableStateOf<String?>(null)
 
     init {
         DropboxSyncWorker.schedulePeriodic(app)
@@ -589,6 +600,88 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 syncToDropbox(updated)
             } catch (e: DuplicatePageNumberException) {
                 ocrErrorMessage = e.message
+            }
+        }
+    }
+
+    fun openToc() {
+        tocError = null
+        currentScreen = ShellScreen.Toc
+    }
+
+    fun closeToc() {
+        currentScreen = ShellScreen.PageList
+    }
+
+    fun cancelTocReview() {
+        tocReviewItems = emptyList()
+        currentScreen = ShellScreen.Toc
+    }
+
+    /** Persist the book's table of contents, then sync. */
+    fun saveSections(sections: List<Section>) {
+        val book = activeBook ?: return
+        viewModelScope.launch {
+            val updated = bookRepository.updateSections(book, sections)
+            activeBook = updated
+            patchBooks(listOf(updated))
+            syncToDropbox(updated)
+        }
+    }
+
+    /**
+     * Run AI 目录 extraction over the selected pages/captures (by page number /
+     * capture id). On success, populates [tocReviewItems] and opens TocReview.
+     */
+    fun generateToc(pageNumbers: List<Int>, captureIds: List<String>) {
+        val book = activeBook ?: return
+        if (!appSettings.hasAnyProvider) {
+            tocError = "未配置 OCR 服务（去设置添加）"
+            return
+        }
+        if (isMonthlyApiBudgetExceeded()) {
+            showMonthlyApiBudgetError()
+            tocError = ocrErrorMessage
+            return
+        }
+        tocGenerating = true
+        tocError = null
+        viewModelScope.launch {
+            try {
+                val images = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    val out = mutableListOf<ByteArray>()
+                    pageNumbers.forEach { pn ->
+                        val page = book.pages.firstOrNull { it.page == pn } ?: return@forEach
+                        val path = bookRepository.archiveImagePath(book, page) ?: return@forEach
+                        runCatching {
+                            out.add(ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(path).readBytes())))
+                        }
+                    }
+                    captureIds.forEach { cid ->
+                        val cap = book.captures.firstOrNull { it.id == cid } ?: return@forEach
+                        runCatching {
+                            out.add(ImageProcessing.toOcrJpeg(ImageProcessing.decode(File(cap.imagePath).readBytes())))
+                        }
+                    }
+                    out
+                }
+                if (images.isEmpty()) {
+                    tocError = "未选择目录页图片"
+                    tocGenerating = false
+                    return@launch
+                }
+                val items = OcrDispatcher(appSettings.providerConfig)
+                    .extractToc(images, onApiCall = { providerId -> recordApiCall(providerId) })
+                tocGenerating = false
+                if (items.isEmpty()) {
+                    tocError = "未能从图片中识别出目录，请换清晰的目录页重试"
+                } else {
+                    tocReviewItems = items
+                    currentScreen = ShellScreen.TocReview
+                }
+            } catch (t: Throwable) {
+                tocGenerating = false
+                tocError = t.message?.take(120) ?: "目录识别失败"
             }
         }
     }

@@ -126,6 +126,8 @@ class MainActivity : ComponentActivity() {
                 }
                 ShellScreen.Workbench -> ShellScreen.PageList
                 ShellScreen.Palette -> ShellScreen.Workbench
+                ShellScreen.Toc -> ShellScreen.PageList
+                ShellScreen.TocReview -> ShellScreen.Toc
                 ShellScreen.BookShelf -> ShellScreen.BookShelf
             }
         }
@@ -198,6 +200,60 @@ class MainActivity : ComponentActivity() {
                             viewModel.entryBrowserOrigin = ShellScreen.PageList
                             viewModel.entryBrowserBookUid = book.uid
                             viewModel.currentScreen = ShellScreen.EntryBrowser
+                        },
+                        onToc = { viewModel.openToc() },
+                    )
+                }
+            }
+
+            ShellScreen.Toc -> {
+                val book = viewModel.activeBook
+                if (book == null) {
+                    viewModel.currentScreen = ShellScreen.BookShelf
+                } else {
+                    com.readingnotes.app.ui.TocScreen(
+                        book = book,
+                        repository = viewModel.bookRepository,
+                        generating = viewModel.tocGenerating,
+                        errorText = viewModel.tocError,
+                        onBack = { viewModel.closeToc() },
+                        onSaveSections = { sections -> viewModel.saveSections(sections) },
+                        onGenerate = { pageNumbers, captureIds -> viewModel.generateToc(pageNumbers, captureIds) },
+                        onJumpToPage = { pageNumber ->
+                            val idx = book.pages.indexOfFirst { it.page >= pageNumber }
+                            if (idx >= 0) {
+                                viewModel.workbenchFocus = null
+                                viewModel.workbenchFocusIsExcerpt = false
+                                viewModel.activePageIndex = idx
+                                viewModel.currentScreen = ShellScreen.Workbench
+                            }
+                        },
+                    )
+                }
+            }
+
+            ShellScreen.TocReview -> {
+                val book = viewModel.activeBook
+                if (book == null) {
+                    viewModel.currentScreen = ShellScreen.BookShelf
+                } else {
+                    com.readingnotes.app.ui.TocReviewScreen(
+                        items = viewModel.tocReviewItems,
+                        hasExisting = book.sections.isNotEmpty(),
+                        onCancel = { viewModel.cancelTocReview() },
+                        onConfirm = { items, replace ->
+                            val newSections = items.map { item ->
+                                com.readingnotes.app.model.Section(
+                                    id = java.util.UUID.randomUUID().toString().take(8),
+                                    title = item.title,
+                                    startPage = item.page,
+                                    level = item.level,
+                                )
+                            }
+                            val merged = if (replace) newSections else book.sections + newSections
+                            viewModel.saveSections(merged)
+                            viewModel.tocReviewItems = emptyList()
+                            viewModel.currentScreen = ShellScreen.Toc
                         },
                     )
                 }

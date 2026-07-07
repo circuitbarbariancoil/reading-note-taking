@@ -65,6 +65,34 @@ import com.readingnotes.app.ui.theme.SumiSoft
 
 enum class PageSortMode { ByOrder, ByPageNumber }
 
+/** A band of OCR'd pages under one coarsest-level chapter (or the preamble). */
+data class ChapterGroup(val key: String, val title: String, val pages: List<Page>)
+
+/**
+ * Split [pages] (already sorted by page number) into chapter bands using the
+ * coarsest section level. Pages before the first section fall into 卷首/未分章.
+ */
+private fun buildChapterGroups(
+    sections: List<com.readingnotes.app.model.Section>,
+    pages: List<Page>,
+): List<ChapterGroup> {
+    val heads = TocLayout.groupingSections(sections)
+    if (heads.isEmpty() || pages.isEmpty()) return emptyList()
+    val out = mutableListOf<ChapterGroup>()
+    val preamble = pages.filter { it.page < heads.first().startPage }
+    if (preamble.isNotEmpty()) {
+        out.add(ChapterGroup("preamble", "卷首 / 未分章", preamble))
+    }
+    heads.forEachIndexed { i, section ->
+        val next = heads.getOrNull(i + 1)?.startPage ?: Int.MAX_VALUE
+        val inRange = pages.filter { it.page >= section.startPage && it.page < next }
+        if (inRange.isNotEmpty()) {
+            out.add(ChapterGroup(section.id, section.title, inRange))
+        }
+    }
+    return out
+}
+
 enum class OcrJobState { Running, Failed }
 
 /** Sealed type to identify items in the page list for selection. */
@@ -98,6 +126,7 @@ fun PageListScreen(
     onDeletePages: (List<Page>) -> Unit = {},
     onDeleteCaptures: (List<Capture>) -> Unit = {},
     onEntries: () -> Unit = {},
+    onToc: () -> Unit = {},
 ) {
     var sortMode by remember { mutableStateOf(PageSortMode.ByPageNumber) }
     var assignPageDialog by remember { mutableStateOf<Capture?>(null) }
@@ -125,6 +154,13 @@ fun PageListScreen(
     val unOcredPages = remember(book.pages) {
         book.pages.filter { it.ocrText.isNullOrBlank() && it.archiveImage != null }.sortedBy { it.page }
     }
+
+    // Chapter grouping of "已处理" pages, only when a TOC exists and sorting by page.
+    val groupByChapter = sortMode == PageSortMode.ByPageNumber && book.sections.isNotEmpty()
+    val chapterGroups = remember(book.sections, ocredPages, groupByChapter) {
+        if (!groupByChapter) emptyList() else buildChapterGroups(book.sections, ocredPages)
+    }
+    val collapsedGroups = remember { mutableStateListOf<String>() }
 
     Box(modifier = Modifier.fillMaxSize().background(Paper)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -194,6 +230,17 @@ fun PageListScreen(
                         )
                     }
                     Text(
+                        "目录",
+                        fontSize = 12.sp,
+                        color = Accent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFEDE6D6))
+                            .clickable(onClick = onToc)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                    Spacer(Modifier.padding(horizontal = 3.dp))
+                    Text(
                         "条目",
                         fontSize = 12.sp,
                         color = Accent,
@@ -203,7 +250,7 @@ fun PageListScreen(
                             .clickable(onClick = onEntries)
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                     )
-                    Spacer(Modifier.padding(horizontal = 4.dp))
+                    Spacer(Modifier.padding(horizontal = 3.dp))
                     Text(
                         if (sortMode == PageSortMode.ByPageNumber) "按页序" else "按时间",
                         fontSize = 12.sp,
@@ -228,20 +275,69 @@ fun PageListScreen(
             ) {
                 // 已处理 = pages already OCR'd (recognized text + page number).
                 if (ocredPages.isNotEmpty()) {
-                    item(span = { GridItemSpan(3) }) {
-                        Text("已处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
-                    }
-                    itemsIndexed(ocredPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
-                        val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
-                        val selected = itemId in selectedItems
-                        PageThumbnail(
-                            page, book, repository,
-                            selected = selected,
-                            onClick = {
-                                if (selectMode) toggleSelect(itemId) else onOpenPage(page)
-                            },
-                            onLongClick = { toggleSelect(itemId) },
-                        )
+                    if (groupByChapter && chapterGroups.isNotEmpty()) {
+                        // Grouped by coarsest chapter (collapsible headers).
+                        chapterGroups.forEach { group ->
+                            val collapsed = group.key in collapsedGroups
+                            item(span = { GridItemSpan(3) }, key = "grp-${group.key}") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            if (collapsed) collapsedGroups.remove(group.key)
+                                            else collapsedGroups.add(group.key)
+                                        }
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        if (collapsed) "▸" else "▾",
+                                        fontSize = 11.sp,
+                                        color = SumiSoft,
+                                        modifier = Modifier.padding(end = 6.dp),
+                                    )
+                                    Text(
+                                        group.title,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Sumi,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text("${group.pages.size}页", fontSize = 11.sp, color = SumiSoft)
+                                }
+                            }
+                            if (!collapsed) {
+                                itemsIndexed(group.pages, key = { index, page -> "page-${group.key}-$index-${page.page}-${page.addedAt}" }) { _, page ->
+                                    val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
+                                    val selected = itemId in selectedItems
+                                    PageThumbnail(
+                                        page, book, repository,
+                                        selected = selected,
+                                        onClick = {
+                                            if (selectMode) toggleSelect(itemId) else onOpenPage(page)
+                                        },
+                                        onLongClick = { toggleSelect(itemId) },
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        item(span = { GridItemSpan(3) }) {
+                            Text("已处理", fontSize = 12.sp, color = SumiSoft, modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                        itemsIndexed(ocredPages, key = { index, page -> "page-$index-${page.page}-${page.addedAt}" }) { _, page ->
+                            val itemId = PageListItemId.ProcessedPage(page.page, page.addedAt)
+                            val selected = itemId in selectedItems
+                            PageThumbnail(
+                                page, book, repository,
+                                selected = selected,
+                                onClick = {
+                                    if (selectMode) toggleSelect(itemId) else onOpenPage(page)
+                                },
+                                onLongClick = { toggleSelect(itemId) },
+                            )
+                        }
                     }
                 }
 
