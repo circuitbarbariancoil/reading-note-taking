@@ -46,8 +46,8 @@ object PageHtml {
         val exColor = PageHighlight.EXCERPT_COLOR
         val excerptCss = ".hl-$exColor{background:${EXCERPT_CSS}40;}" +
             "\n.hl-$exColor.hl-focus{background:${EXCERPT_CSS}73;}" +
-            "\n.exflash{$hlBorder:2px solid transparent;animation:exflashfade 1.8s ease-out;}" +
-            "\n@keyframes exflashfade{0%{$hlBorderColor:transparent;}20%{$hlBorderColor:$EXCERPT_CSS;}70%{$hlBorderColor:$EXCERPT_CSS;}100%{$hlBorderColor:transparent;}}"
+            "\n.exflash{$hlBorder:2px solid $EXCERPT_CSS;animation:exflashfade 0.6s ease-out;}" +
+            "\n@keyframes exflashfade{0%{$hlBorderColor:transparent;}100%{$hlBorderColor:$EXCERPT_CSS;}}"
         val exRange = if (flashExcerpt) flash else null
         val body = buildBody(page.ocrText.orEmpty(), page.highlights, colors, exRange)
         val startJs = when {
