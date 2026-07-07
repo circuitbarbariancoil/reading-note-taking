@@ -160,6 +160,21 @@ class BookRepository(
         return book
     }
 
+    /** Update a book's title/author metadata. Returns the updated book. */
+    suspend fun updateBookMeta(book: Book, title: String, author: String): Book = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val base = loadBook(book.uid) ?: book
+            val updated = base.copy(
+                title = title.ifBlank { "未命名" },
+                author = author,
+                updatedAt = utcNow(),
+            )
+            saveBook(updated)
+            cachedBook = updated
+            updated
+        }
+    }
+
     /**
      * Save a photo as a Capture (unprocessed) without running OCR.
      * Returns the updated book with the new capture appended.

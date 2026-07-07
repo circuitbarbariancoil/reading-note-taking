@@ -146,6 +146,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.currentScreen = ShellScreen.PageList
                     },
                     onDeleteBooks = { uids -> viewModel.deleteBooks(uids) },
+                    onEditBook = { book, title, author -> viewModel.updateBookMeta(book, title, author) },
                     onEntries = {
                         viewModel.entryBrowserOrigin = ShellScreen.BookShelf
                         viewModel.entryBrowserBookUid = null
@@ -174,6 +175,7 @@ class MainActivity : ComponentActivity() {
                         onCapture = { viewModel.openCapture(fromWorkbench = false) },
                         onImportPdf = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                         onBatchOcr = { viewModel.batchOcrAll() },
+                        onEditBook = { title, author -> viewModel.updateBookMeta(book, title, author) },
                         onBack = {
                             viewModel.onEnterBookShelf()
                             viewModel.currentScreen = ShellScreen.BookShelf

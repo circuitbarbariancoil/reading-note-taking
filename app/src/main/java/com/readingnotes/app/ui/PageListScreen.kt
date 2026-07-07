@@ -83,6 +83,7 @@ fun PageListScreen(
     onCapture: () -> Unit,
     onImportPdf: () -> Unit,
     onBatchOcr: () -> Unit,
+    onEditBook: (String, String) -> Unit = { _, _ -> },
     onBack: () -> Unit,
     onOcrCapture: (Capture) -> Unit,
     processItems: List<ProcessItem> = emptyList(),
@@ -110,6 +111,7 @@ fun PageListScreen(
     }
 
     val haptic = LocalHapticFeedback.current
+    var editInfo by remember { mutableStateOf(false) }
 
     // "已处理" = pages that have been OCR'd (recognized text + page number).
     val ocredPages = remember(book.pages, sortMode) {
@@ -171,9 +173,15 @@ fun PageListScreen(
                         color = SumiSoft,
                         modifier = Modifier.clickable(onClick = onBack).padding(end = 8.dp),
                     )
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { editInfo = true }
+                            .padding(vertical = 2.dp),
+                    ) {
                         Text(
-                            book.title,
+                            if (book.author.isBlank()) book.title else "${book.title} · ${book.author}",
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Medium,
                             fontSize = 18.sp,
@@ -398,6 +406,20 @@ fun PageListScreen(
                 assignPageDialog = null
                 onDeleteCapture(capture)
             },
+        )
+    }
+
+    if (editInfo) {
+        BookInfoDialog(
+            onDismiss = { editInfo = false },
+            onConfirm = { title, author ->
+                editInfo = false
+                onEditBook(title, author)
+            },
+            initialTitle = book.title,
+            initialAuthor = book.author,
+            dialogTitle = "编辑信息",
+            confirmLabel = "保存",
         )
     }
 

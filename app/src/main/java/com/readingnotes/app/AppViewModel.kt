@@ -567,6 +567,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun updateBookMeta(book: Book, title: String, author: String) {
+        viewModelScope.launch {
+            val updated = bookRepository.updateBookMeta(book, title, author)
+            if (activeBook?.uid == updated.uid) activeBook = updated
+            refreshBooks()
+            syncToDropbox(updated)
+        }
+    }
+
     fun changePageNumber(page: Page, newNumber: Int) {
         val book = activeBook ?: return
         viewModelScope.launch {
