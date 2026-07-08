@@ -1,18 +1,19 @@
 export interface ZoomPanOptions {
-  /** When true, wheel only zooms while Ctrl/⌘ is held (plain wheel bubbles). */
-  ctrlToZoom: boolean;
-  /** Fired on a click that did not turn into a drag (e.g. open fullscreen). */
-  onTap?: () => void;
+  /** Fired on a click on empty backdrop (not the image, not a drag). */
+  onBackdropClick?: () => void;
 }
 
 const MIN_FACTOR = 0.8;
 const MAX_SCALE = 8;
+/** Pixels of the image kept on-stage on each axis so it can't be lost. */
+const KEEP = 60;
 
 /**
- * Reusable zoom/pan behaviour for an <img> inside a positioned stage element
- * (no third-party deps). Wheel zoom centred on the cursor, drag to pan when
- * zoomed, double-click to toggle fit ↔ 2×, with edge clamping. Shared by the
- * fullscreen lightbox and the A-view inline page photo.
+ * Zoom/pan behaviour for an <img> inside a positioned stage element (no
+ * third-party deps): wheel pans (Shift = horizontal), Ctrl+wheel zooms centred
+ * on the cursor, drag pans freely in any direction, double-click toggles
+ * fit ↔ 2×. Panning is only loosely bounded (KEEP px stay visible) so it feels
+ * free. Used by the fullscreen lightbox.
  */
 export class ZoomPanController {
   private scale = 1;
@@ -27,12 +28,9 @@ export class ZoomPanController {
   constructor(
     private stage: HTMLElement,
     private img: HTMLImageElement,
-    private opts: ZoomPanOptions,
+    private opts: ZoomPanOptions = {},
   ) {
-    // Bound at the window capture phase so we intercept Ctrl+wheel before
-    // Obsidian's own workspace zoom handler swallows it (element-level
-    // listeners never fire for it inside the main workspace).
-    window.addEventListener("wheel", this.onWheel, { passive: false, capture: true });
+    this.stage.addEventListener("wheel", this.onWheel, { passive: false });
     this.stage.addEventListener("pointerdown", this.onPointerDown);
     this.stage.addEventListener("pointermove", this.onPointerMove);
     this.stage.addEventListener("pointerup", this.onPointerUp);
@@ -42,7 +40,7 @@ export class ZoomPanController {
   }
 
   destroy(): void {
-    window.removeEventListener("wheel", this.onWheel, { capture: true });
+    this.stage.removeEventListener("wheel", this.onWheel);
     this.stage.removeEventListener("pointerdown", this.onPointerDown);
     this.stage.removeEventListener("pointermove", this.onPointerMove);
     this.stage.removeEventListener("pointerup", this.onPointerUp);
@@ -83,14 +81,23 @@ export class ZoomPanController {
   }
 
   private onWheel = (e: WheelEvent): void => {
-    if (!this.stage.contains(e.target as Node)) return; // not over our image
-    if (this.opts.ctrlToZoom && !e.ctrlKey && !e.metaKey) return; // let the page scroll
-    // Intercept before Obsidian's global Ctrl+wheel UI-zoom handler.
+    if (!this.stage.contains(e.target as Node)) return;
     e.preventDefault();
     e.stopPropagation();
-    const rect = this.stage.getBoundingClientRect();
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    this.zoomAt(this.scale * factor, e.clientX - rect.left, e.clientY - rect.top);
+    if (e.ctrlKey || e.metaKey) {
+      const rect = this.stage.getBoundingClientRect();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      this.zoomAt(this.scale * factor, e.clientX - rect.left, e.clientY - rect.top);
+      return;
+    }
+    // Plain wheel pans vertically; Shift+wheel pans horizontally.
+    if (e.shiftKey) {
+      this.tx -= e.deltaY + e.deltaX;
+    } else {
+      this.ty -= e.deltaY;
+      this.tx -= e.deltaX;
+    }
+    this.apply();
   };
 
   private onDoubleClick = (e: MouseEvent): void => {
@@ -106,9 +113,8 @@ export class ZoomPanController {
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button")) return;
-    this.dragMoved = false;
-    if (!this.zoomed) return; // nothing to pan; leave the click for onTap
     this.dragging = true;
+    this.dragMoved = false;
     this.lastX = e.clientX;
     this.lastY = e.clientY;
     this.stage.setPointerCapture(e.pointerId);
@@ -135,17 +141,18 @@ export class ZoomPanController {
 
   private onClick = (e: MouseEvent): void => {
     if ((e.target as HTMLElement).closest("button")) return;
-    if (!this.dragMoved && this.opts.onTap) this.opts.onTap();
+    if (this.dragMoved) return;
+    if (e.target === this.stage && this.opts.onBackdropClick) this.opts.onBackdropClick();
   };
 
-  /** Apply the transform, clamping so the image can't drift off the stage. */
+  /** Loosely bound the pan so at least KEEP px of the image stay on-stage. */
   private apply(): void {
     const sw = this.stage.clientWidth;
     const sh = this.stage.clientHeight;
     const w = (this.img.naturalWidth || 1) * this.scale;
     const h = (this.img.naturalHeight || 1) * this.scale;
-    this.tx = w <= sw ? (sw - w) / 2 : Math.min(0, Math.max(sw - w, this.tx));
-    this.ty = h <= sh ? (sh - h) / 2 : Math.min(0, Math.max(sh - h, this.ty));
+    this.tx = Math.min(sw - KEEP, Math.max(KEEP - w, this.tx));
+    this.ty = Math.min(sh - KEEP, Math.max(KEEP - h, this.ty));
     this.img.style.transform = `translate(${this.tx}px, ${this.ty}px) scale(${this.scale})`;
     this.stage.toggleClass("rn-lb-zoomed", this.zoomed);
   }

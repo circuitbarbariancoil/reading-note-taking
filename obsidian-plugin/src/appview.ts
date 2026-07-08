@@ -3,7 +3,6 @@ import { displayAnnotation } from "./booknote";
 import { renderMarkupText, renderPageText, stripRuby } from "./markup";
 import type ReadingNotesPlugin from "./main";
 import { Book, Entry } from "./types";
-import { ZoomPanController } from "./zoompan";
 
 export const APP_VIEW_TYPE = "reading-notes-app-view";
 
@@ -31,7 +30,6 @@ export class ReadingAppView extends ItemView {
   private pending: NavTarget | null = null;
   private flashHighlightId: string | null = null;
   private flashKeyword: string | null = null;
-  private inlineZoom: ZoomPanController | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -50,11 +48,6 @@ export class ReadingAppView extends ItemView {
 
   getIcon(): string {
     return "book-open";
-  }
-
-  async onClose(): Promise<void> {
-    this.inlineZoom?.destroy();
-    this.inlineZoom = null;
   }
 
   async onOpen(): Promise<void> {
@@ -305,24 +298,16 @@ export class ReadingAppView extends ItemView {
     }
 
     if (this.pageMode === "image") {
-      this.inlineZoom?.destroy();
-      this.inlineZoom = null;
-      const stage = reader.createDiv({ cls: "rn-inline-photo" });
-      const ph = stage.createDiv({ cls: "rn-dim rn-inline-loading", text: "页图加载中…" });
-      stage.createSpan({ cls: "rn-inline-hint", text: "Ctrl+滚轮缩放 · 点击放大" });
+      const imgWrap = reader.createDiv({ cls: "rn-img-wrap" });
+      const ph = imgWrap.createDiv({ cls: "rn-dim", text: "页图加载中…" });
       this.plugin
         .client()
         .temporaryLink(`${book.dropbox_root}/${page.archive_image}`)
         .then((link) => {
           ph.remove();
-          const img = stage.createEl("img", { cls: "rn-inline-img" });
-          const zoom = new ZoomPanController(stage, img, {
-            ctrlToZoom: true,
-            onTap: () => this.plugin.showPageImage(book, pageNum, true),
-          });
-          this.inlineZoom = zoom;
-          img.onload = () => zoom.fit();
+          const img = imgWrap.createEl("img", { cls: "rn-page-img" });
           img.src = link;
+          img.addEventListener("click", () => this.plugin.showPageImage(book, pageNum, true));
         })
         .catch((e: Error) => ph.setText(`页图加载失败：${e.message}`));
     } else {

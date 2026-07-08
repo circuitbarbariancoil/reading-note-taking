@@ -48,7 +48,7 @@ export class Lightbox extends Modal {
     this.indicator = bar.createDiv({ cls: "rn-lb-indicator" });
     const spacer = bar.createDiv({ cls: "rn-lb-spacer" });
     spacer.style.flex = "1";
-    bar.createSpan({ cls: "rn-lb-hint", text: "Ctrl+滚轮缩放 · 拖拽平移" });
+    bar.createSpan({ cls: "rn-lb-hint", text: "滚轮平移 · Ctrl+滚轮缩放 · 拖拽" });
     this.toolBtn(bar, "zoom-out", "缩小", () => this.zoom.zoomBy(1 / 1.25));
     this.toolBtn(bar, "maximize", "适应窗口 (0)", () => this.zoom.fit());
     this.toolBtn(bar, "zoom-in", "放大", () => this.zoom.zoomBy(1.25));
@@ -58,7 +58,9 @@ export class Lightbox extends Modal {
     this.placeholder = this.stage.createDiv({ cls: "rn-lb-loading", text: "加载中…" });
     this.img = this.stage.createEl("img", { cls: "rn-lb-img" });
     this.img.hide();
-    this.zoom = new ZoomPanController(this.stage, this.img, { ctrlToZoom: true });
+    this.zoom = new ZoomPanController(this.stage, this.img, {
+      onBackdropClick: () => this.close(),
+    });
 
     if (this.opts.paging && this.opts.pages.length > 1) {
       const prev = this.stage.createEl("button", { cls: "rn-lb-nav rn-lb-prev" });
@@ -75,10 +77,6 @@ export class Lightbox extends Modal {
       };
     }
 
-    // Clicking the empty backdrop (not the image) closes.
-    this.stage.addEventListener("click", (e) => {
-      if (e.target === this.stage && !this.zoom.zoomed) this.close();
-    });
     this.scope.register([], "ArrowLeft", () => this.opts.paging && this.go(-1));
     this.scope.register([], "ArrowRight", () => this.opts.paging && this.go(1));
     this.scope.register([], "0", () => this.zoom.fit());
