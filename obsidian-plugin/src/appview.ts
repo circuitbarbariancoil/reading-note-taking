@@ -307,7 +307,7 @@ export class ReadingAppView extends ItemView {
           ph.remove();
           const img = imgWrap.createEl("img", { cls: "rn-page-img" });
           img.src = link;
-          img.addEventListener("click", () => void this.plugin.showPageImage(book, pageNum));
+          img.addEventListener("click", () => this.plugin.showPageImage(book, pageNum, true));
         })
         .catch((e: Error) => ph.setText(`页图加载失败：${e.message}`));
     } else {

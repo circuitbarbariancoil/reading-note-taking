@@ -11,6 +11,7 @@ import {
 import { fillAnchorChip } from "./anchorchip";
 import { APP_VIEW_TYPE, ReadingAppView } from "./appview";
 import { ANCHOR_INLINE_RE, syncBookNote } from "./booknote";
+import { Lightbox, LightboxPage } from "./lightbox";
 import { livePreviewExtension } from "./livepreview";
 import {
   authorizeUrl,
@@ -141,18 +142,29 @@ export default class ReadingNotesPlugin extends Plugin {
     }
   }
 
-  async showPageImage(book: Book, pageNum: number): Promise<void> {
+  /**
+   * Opens the zoomable page-image viewer. With [paging] the viewer can step
+   * through every page that has a scan (A view); inline chips pass false.
+   */
+  showPageImage(book: Book, pageNum: number, paging = false): void {
     const page = book.pages.find((p) => p.page === pageNum);
     if (!page?.archive_image) {
       new Notice(`p.${pageNum} 没有页图。`);
       return;
     }
-    try {
-      const link = await this.client().temporaryLink(`${book.dropbox_root}/${page.archive_image}`);
-      new PageImageModal(this.app, `${book.title} · p.${pageNum}`, link).open();
-    } catch (e) {
-      new Notice(`页图加载失败：${(e as Error).message}`);
-    }
+    const withImages = paging ? book.pages.filter((p) => p.archive_image) : [page];
+    const pages: LightboxPage[] = [...withImages]
+      .sort((a, b) => a.page - b.page)
+      .map((p) => ({
+        page: p.page,
+        load: () => this.client().temporaryLink(`${book.dropbox_root}/${p.archive_image}`),
+      }));
+    new Lightbox(this.app, {
+      titleBase: book.title,
+      pages,
+      startPage: pageNum,
+      paging: paging && pages.length > 1,
+    }).open();
   }
 
   /** Renders `~={color}…=~` markup inside reading view text (e.g. entry quotes). */
@@ -176,23 +188,6 @@ export default class ReadingNotesPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-  }
-}
-
-class PageImageModal extends Modal {
-  constructor(
-    app: App,
-    private title: string,
-    private link: string,
-  ) {
-    super(app);
-  }
-
-  onOpen(): void {
-    this.titleEl.setText(this.title);
-    this.contentEl.addClass("rn-img-modal");
-    const img = this.contentEl.createEl("img");
-    img.src = this.link;
   }
 }
 
