@@ -1,4 +1,5 @@
 import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { displayAnnotation } from "./booknote";
 import { renderMarkupText, renderPageText, stripRuby } from "./markup";
 import type ReadingNotesPlugin from "./main";
 import { Book, Entry } from "./types";
@@ -23,6 +24,7 @@ export class ReadingAppView extends ItemView {
   private currentPage: number | null = null;
   private tab: BookTab = "read";
   private vertical = false;
+  private pageMode: "text" | "image" = "text";
   private searchQuery = "";
   private pending: NavTarget | null = null;
 
@@ -239,7 +241,10 @@ export class ReadingAppView extends ItemView {
       return;
     }
 
-    const nav = content.createDiv({ cls: "rn-page-nav" });
+    if (this.pageMode === "image" && !page.archive_image) this.pageMode = "text";
+    const reader = content.createDiv({ cls: "rn-reader" });
+
+    const nav = reader.createDiv({ cls: "rn-page-nav" });
     const sorted = [...book.pages].sort((a, b) => a.page - b.page);
     const idx = sorted.findIndex((p) => p.page === pageNum);
     const prev = nav.createEl("button", { cls: "rn-btn rn-btn-icon" });
@@ -261,14 +266,30 @@ export class ReadingAppView extends ItemView {
       this.renderBook();
     });
     nav.createDiv({ cls: "rn-spacer" });
-    const dirBtn = nav.createEl("button", { cls: "rn-btn", text: this.vertical ? "竖排" : "横排" });
-    dirBtn.addEventListener("click", () => {
-      this.vertical = !this.vertical;
-      void this.renderPage(content, pageNum);
-    });
 
-    if (page.archive_image) {
-      const imgWrap = content.createDiv({ cls: "rn-img-wrap" });
+    const seg = nav.createDiv({ cls: "rn-seg" });
+    const segBtn = (mode: "text" | "image", text: string) => {
+      const b = seg.createEl("button", { cls: "rn-seg-btn", text });
+      if (this.pageMode === mode) b.addClass("rn-seg-active");
+      b.disabled = mode === "image" && !page.archive_image;
+      b.addEventListener("click", () => {
+        this.pageMode = mode;
+        void this.renderPage(content, pageNum);
+      });
+    };
+    segBtn("text", "原文");
+    segBtn("image", "页图");
+
+    if (this.pageMode === "text") {
+      const dirBtn = nav.createEl("button", { cls: "rn-btn rn-btn-quiet", text: this.vertical ? "竖排" : "横排" });
+      dirBtn.addEventListener("click", () => {
+        this.vertical = !this.vertical;
+        void this.renderPage(content, pageNum);
+      });
+    }
+
+    if (this.pageMode === "image") {
+      const imgWrap = reader.createDiv({ cls: "rn-img-wrap" });
       const ph = imgWrap.createDiv({ cls: "rn-dim", text: "页图加载中…" });
       this.plugin
         .client()
@@ -280,20 +301,21 @@ export class ReadingAppView extends ItemView {
           img.addEventListener("click", () => void this.plugin.showPageImage(book, pageNum));
         })
         .catch((e: Error) => ph.setText(`页图加载失败：${e.message}`));
-    }
-
-    const textEl = content.createDiv({ cls: "rn-page-text" });
-    if (this.vertical) textEl.addClass("rn-vertical");
-    if (page.ocr_text) {
-      renderPageText(textEl, page, this.plugin.palette);
     } else {
-      textEl.createDiv({ cls: "rn-dim", text: "（本页没有 OCR 原文）" });
+      const textEl = reader.createDiv({ cls: "rn-page-text" });
+      if (this.vertical) textEl.addClass("rn-vertical");
+      if (page.ocr_text) {
+        renderPageText(textEl, page, this.plugin.palette);
+      } else {
+        textEl.createDiv({ cls: "rn-dim", text: "（本页没有 OCR 原文）" });
+      }
     }
 
     const pageEntries = book.entries.filter((e) => e.page === pageNum);
     if (pageEntries.length > 0) {
-      content.createDiv({ cls: "rn-side-heading", text: `本页条目 ${pageEntries.length}` });
-      const list = content.createDiv();
+      const details = reader.createEl("details", { cls: "rn-page-entries" });
+      details.createEl("summary", { text: `本页条目 ${pageEntries.length}` });
+      const list = details.createDiv();
       for (const e of pageEntries) this.renderEntryCard(list, e, false);
     }
   }
@@ -357,7 +379,8 @@ export class ReadingAppView extends ItemView {
     if (entry.page != null) head.createSpan({ cls: "rn-entry-page", text: `p.${entry.page}` });
     const body = card.createDiv({ cls: "rn-entry-text" });
     renderMarkupText(body, entry.text, this.plugin.palette);
-    if (entry.annotation.trim()) card.createDiv({ cls: "rn-entry-annot", text: `💬 ${entry.annotation.trim()}` });
+    const annotation = displayAnnotation(entry);
+    if (annotation) card.createDiv({ cls: "rn-entry-annot", text: `💬 ${annotation}` });
     if (entry.tags.length > 0) {
       const tagsEl = card.createDiv({ cls: "rn-entry-tags" });
       for (const t of entry.tags) tagsEl.createSpan({ cls: "rn-tag", text: t.startsWith("#") ? t : `#${t}` });

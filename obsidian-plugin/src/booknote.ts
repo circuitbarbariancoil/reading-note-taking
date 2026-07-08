@@ -5,9 +5,9 @@ import { Book, Entry, entryOrder } from "./types";
  * One note per book. Each app entry occupies one block of plain lines
  * (no blockquote/callout markup):
  *
- *   `app:<id>`
- *   p.91 · 原文副本（可含 ~={color}=~ 高亮与《》ruby）
- *   💬 App 批注
+ *   `app:<id>`            ← renders as a caption chip carrying the page number
+ *   原文副本（可含 ~={color}=~ 高亮与《》ruby）
+ *   💬 App 批注（与标签重复时省略）
  *   #tag1 #tag2
  *
  * Sync is strictly append-only and position-aware: blocks already in the note
@@ -20,16 +20,23 @@ import { Book, Entry, entryOrder } from "./types";
 export const ANCHOR_RE = /^`app:([A-Za-z0-9_-]+)`\s*$/;
 export const ANCHOR_INLINE_RE = /^app:([A-Za-z0-9_-]+)$/;
 
+/** The annotation, unless it merely repeats the entry's tags. */
+export function displayAnnotation(entry: Entry): string {
+  const annotation = entry.annotation.trim();
+  if (!annotation) return "";
+  const norm = (s: string) => s.replace(/^#/, "").trim();
+  const isJustTags = annotation.split(/\s+/).every((w) => entry.tags.some((t) => norm(t) === norm(w)));
+  return isJustTags ? "" : annotation;
+}
+
 export function entryBlock(entry: Entry): string {
   const lines: string[] = [];
   lines.push(`\`app:${entry.id}\``);
-  const pageLabel = entry.page != null ? `p.${entry.page}` : "无页码";
-  const body = entry.text.split("\n");
-  lines.push(`${pageLabel} · ${body[0] ?? ""}`);
-  for (const extra of body.slice(1)) lines.push(extra);
-  const annotation = entry.annotation.trim();
-  if (annotation.length > 0) lines.push(`💬 ${annotation.split("\n").join(" ")}`);
-  if (entry.tags.length > 0) lines.push(entry.tags.map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" "));
+  for (const line of entry.text.split("\n")) lines.push(line);
+  const tags = entry.tags.map((t) => (t.startsWith("#") ? t : `#${t}`));
+  const annotation = displayAnnotation(entry);
+  if (annotation) lines.push(`💬 ${annotation.split("\n").join(" ")}`);
+  if (tags.length > 0) lines.push(tags.join(" "));
   return lines.join("\n");
 }
 

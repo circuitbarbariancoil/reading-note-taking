@@ -20,6 +20,7 @@ import {
   pkceChallenge,
 } from "./dropbox";
 import { renderMarkupText } from "./markup";
+import { BooksClient, MockClient } from "./mockclient";
 import { Book, DEFAULT_PALETTE, HighlightPalette } from "./types";
 
 interface ReadingNotesSettings {
@@ -38,7 +39,7 @@ const DEFAULT_SETTINGS: ReadingNotesSettings = {
 export default class ReadingNotesPlugin extends Plugin {
   settings: ReadingNotesSettings = DEFAULT_SETTINGS;
   palette: HighlightPalette = DEFAULT_PALETTE;
-  private _client: DropboxClient | null = null;
+  private _client: BooksClient | null = null;
   private bookCache = new Map<string, Book>();
 
   async onload(): Promise<void> {
@@ -77,9 +78,13 @@ export default class ReadingNotesPlugin extends Plugin {
     void this.refreshPalette();
   }
 
-  client(): DropboxClient {
+  client(): BooksClient {
     if (!this.settings.refreshToken) throw new Error("未连接 Dropbox：请在插件设置里完成授权。");
-    if (!this._client) this._client = new DropboxClient(this.settings.appKey, this.settings.refreshToken);
+    if (!this._client) {
+      this._client = this.settings.refreshToken.startsWith("mock:")
+        ? new MockClient(this.app, this.settings.refreshToken.slice(5))
+        : new DropboxClient(this.settings.appKey, this.settings.refreshToken);
+    }
     return this._client;
   }
 

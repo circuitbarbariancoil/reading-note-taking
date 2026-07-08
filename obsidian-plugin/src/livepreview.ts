@@ -46,8 +46,9 @@ class AnchorChipWidget extends WidgetType {
     return chip;
   }
 
+  /** Handle clicks ourselves — the editor must not move the caret into the range. */
   ignoreEvent(): boolean {
-    return false;
+    return true;
   }
 }
 
@@ -106,7 +107,7 @@ export function livePreviewExtension(plugin: ReadingNotesPlugin) {
             const start = from + m.index!;
             const end = start + m[0].length;
             if (touches(start, end)) continue;
-            const openLen = 3 + m[1].length; // ~={color}
+            const openLen = 4 + m[1].length; // ~={color}
             const css = colorCss(m[1], plugin.palette);
             const style =
               m[1] === EXCERPT_COLOR

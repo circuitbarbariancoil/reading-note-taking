@@ -1,7 +1,7 @@
 {
   "id": "reading-notes",
   "name": "Reading Notes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minAppVersion": "1.4.0",
   "description": "读书笔记 App 的 Obsidian 只读渲染端：一书一笔记、append-only 条目同步、页图/原文快速访问。",
   "author": "reading-note-taking",
