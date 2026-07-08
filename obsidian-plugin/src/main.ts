@@ -112,7 +112,7 @@ export default class ReadingNotesPlugin extends Plugin {
     }
   }
 
-  async openAppView(target?: { bookUid: string; page?: number }): Promise<void> {
+  async openAppView(target?: { bookUid: string; page?: number; highlightId?: string }): Promise<void> {
     let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(APP_VIEW_TYPE)[0] ?? null;
     if (!leaf) {
       leaf = this.app.workspace.getLeaf("tab");

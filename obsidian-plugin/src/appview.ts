@@ -9,6 +9,7 @@ export const APP_VIEW_TYPE = "reading-notes-app-view";
 interface NavTarget {
   bookUid: string;
   page?: number;
+  highlightId?: string;
 }
 
 type BookTab = "read" | "toc" | "entries";
@@ -27,6 +28,8 @@ export class ReadingAppView extends ItemView {
   private pageMode: "text" | "image" = "text";
   private searchQuery = "";
   private pending: NavTarget | null = null;
+  private flashHighlightId: string | null = null;
+  private flashKeyword: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -51,6 +54,7 @@ export class ReadingAppView extends ItemView {
     if (this.pending) {
       const t = this.pending;
       this.pending = null;
+      this.flashHighlightId = t.highlightId ?? null;
       await this.openBook(t.bookUid, t.page);
     } else {
       await this.renderShelf();
@@ -62,6 +66,7 @@ export class ReadingAppView extends ItemView {
       this.pending = target;
       return;
     }
+    this.flashHighlightId = target.highlightId ?? null;
     await this.openBook(target.bookUid, target.page);
   }
 
@@ -108,12 +113,16 @@ export class ReadingAppView extends ItemView {
     try {
       const book = await this.plugin.getBook(uid);
       cover.setText(book.title.slice(0, 2));
-      if (book.cover_path) {
+      // Explicit cover if set, else fall back to the first page's scan.
+      const firstPage = [...book.pages].sort((a, b) => a.page - b.page).find((p) => p.archive_image);
+      const coverRel = book.cover_path ?? firstPage?.archive_image;
+      if (coverRel) {
         void this.plugin
           .client()
-          .temporaryLink(`${book.dropbox_root}/${book.cover_path}`)
+          .temporaryLink(`${book.dropbox_root}/${coverRel}`)
           .then((link) => {
             cover.empty();
+            cover.addClass("rn-cover-img");
             const img = cover.createEl("img");
             img.src = link;
           })
@@ -306,6 +315,7 @@ export class ReadingAppView extends ItemView {
       if (this.vertical) textEl.addClass("rn-vertical");
       if (page.ocr_text) {
         renderPageText(textEl, page, this.plugin.palette);
+        this.applyFlash(textEl);
       } else {
         textEl.createDiv({ cls: "rn-dim", text: "（本页没有 OCR 原文）" });
       }
@@ -318,6 +328,46 @@ export class ReadingAppView extends ItemView {
       const list = details.createDiv();
       for (const e of pageEntries) this.renderEntryCard(list, e, false);
     }
+  }
+
+  /**
+   * After a jump (from a note anchor) or a search hit, scroll the target into
+   * the viewport centre and pulse it so the eye lands on the right span/word.
+   */
+  private applyFlash(textEl: HTMLElement): void {
+    let target: HTMLElement | null = null;
+    if (this.flashHighlightId) {
+      target = textEl.querySelector<HTMLElement>(`[data-hl-id="${this.flashHighlightId}"]`);
+      if (!target) target = textEl.querySelector<HTMLElement>(".rn-hl");
+    } else if (this.flashKeyword) {
+      target = this.wrapFirstMatch(textEl, this.flashKeyword);
+    }
+    this.flashHighlightId = null;
+    this.flashKeyword = null;
+    if (!target) return;
+    const el = target;
+    window.setTimeout(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.addClass("rn-flash");
+      window.setTimeout(() => el.removeClass("rn-flash"), 1600);
+    }, 60);
+  }
+
+  /** Wraps the first occurrence of [needle] in a flashable span; returns it. */
+  private wrapFirstMatch(root: HTMLElement, needle: string): HTMLElement | null {
+    const q = needle.toLowerCase();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+      const at = node.data.toLowerCase().indexOf(q);
+      if (at === -1) continue;
+      const after = node.splitText(at);
+      after.splitText(needle.length);
+      const span = createSpan({ cls: "rn-hl" });
+      after.replaceWith(span);
+      span.appendText(after.data);
+      return span;
+    }
+    return null;
   }
 
   private sectionFor(pageNum: number): string | null {
@@ -389,6 +439,8 @@ export class ReadingAppView extends ItemView {
       card.addEventListener("click", () => {
         this.currentPage = entry.page!;
         this.tab = "read";
+        this.pageMode = "text";
+        this.flashHighlightId = entry.highlight_id ?? null;
         this.renderBook();
       });
       card.addClass("rn-clickable");
@@ -421,11 +473,16 @@ export class ReadingAppView extends ItemView {
       const text = p.ocr_text ?? "";
       const at = text.toLowerCase().indexOf(q);
       const from = Math.max(0, at - 30);
-      card.createDiv({ cls: "rn-entry-text", text: `…${text.slice(from, at + query.length + 50)}…` });
+      const body = card.createDiv({ cls: "rn-entry-text" });
+      body.appendText(`…${text.slice(from, at)}`);
+      body.createSpan({ cls: "rn-search-hit", text: text.slice(at, at + query.length) });
+      body.appendText(`${text.slice(at + query.length, at + query.length + 50)}…`);
       card.addEventListener("click", () => {
         this.currentPage = p.page;
         this.tab = "read";
+        this.pageMode = "text";
         this.searchQuery = "";
+        this.flashKeyword = query;
         this.renderBook();
       });
     }

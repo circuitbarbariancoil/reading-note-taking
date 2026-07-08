@@ -64,6 +64,7 @@ export function renderPageText(el: HTMLElement, page: Page, palette: HighlightPa
     if (start > cursor) renderRuby(el, cps.slice(cursor, start).join(""));
     const css = colorCss(h.color, palette);
     const span = el.createSpan({ cls: "rn-hl" });
+    if (h.id) span.dataset.hlId = h.id;
     if (h.color === EXCERPT_COLOR) {
       span.style.background = css + "40";
     } else {

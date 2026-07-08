@@ -34,7 +34,9 @@ export function fillAnchorChip(plugin: ReadingNotesPlugin, chip: HTMLElement, en
       chip.createSpan({ cls: "rn-anchor-page", text: entry.page != null ? `p.${entry.page}` : "条目" });
       if (entry.page != null) {
         iconButton(chip, "image", "查看页图", () => void plugin.showPageImage(book, entry.page!));
-        iconButton(chip, "book-open", "在阅读视图打开原文", () => void plugin.openAppView({ bookUid, page: entry.page! }));
+        iconButton(chip, "book-open", "在阅读视图打开原文", () =>
+          void plugin.openAppView({ bookUid, page: entry.page!, highlightId: entry.highlight_id ?? undefined }),
+        );
       }
     })
     .catch((e: Error) => {

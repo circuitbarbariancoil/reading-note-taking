@@ -69,6 +69,23 @@ export interface SyncResult {
   added: number;
 }
 
+/**
+ * Line index of the last `---` thematic break in the body (after any leading
+ * frontmatter), or null if there is none. Everything from this line down is the
+ * user's hand-written zone — tail-appended entries go BEFORE it, never below.
+ */
+export function forbiddenZoneStart(lines: string[]): number | null {
+  let bodyStart = 0;
+  if (lines[0]?.trim() === "---") {
+    const close = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+    if (close !== -1) bodyStart = close + 1;
+  }
+  for (let i = lines.length - 1; i >= bodyStart; i--) {
+    if (lines[i].trim() === "---") return i;
+  }
+  return null;
+}
+
 /** Pure append-only merge of missing entries into existing note [text]. */
 export function mergeMissingEntries(text: string, book: Book): SyncResult {
   const existing = anchorIdsInText(text);
@@ -93,8 +110,15 @@ export function mergeMissingEntries(text: string, book: Book): SyncResult {
     if (successorLine != null) {
       lines.splice(successorLine, 0, ...block, "");
     } else {
-      if (lines.length > 0 && lines[lines.length - 1].trim() !== "") lines.push("");
-      lines.push(...block, "");
+      // No successor → append at the tail, but keep out of the user's zone
+      // below the last `---` divider if one exists.
+      const boundary = forbiddenZoneStart(lines);
+      if (boundary != null) {
+        lines.splice(boundary, 0, ...block, "");
+      } else {
+        if (lines.length > 0 && lines[lines.length - 1].trim() !== "") lines.push("");
+        lines.push(...block, "");
+      }
     }
   }
   return { content: lines.join("\n"), added: missing.length };
