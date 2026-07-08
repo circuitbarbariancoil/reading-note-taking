@@ -1,6 +1,6 @@
 {
   "name": "reading-notes-obsidian",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Obsidian read-only companion plugin for the reading-note-taking Android app",
   "main": "main.js",
   "scripts": {
@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
     "@types/node": "^20.11.0",
     "builtin-modules": "^3.3.0",
     "esbuild": "^0.21.5",

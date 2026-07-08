@@ -8,8 +8,10 @@ import {
   SuggestModal,
   WorkspaceLeaf,
 } from "obsidian";
+import { fillAnchorChip } from "./anchorchip";
 import { APP_VIEW_TYPE, ReadingAppView } from "./appview";
 import { ANCHOR_INLINE_RE, syncBookNote } from "./booknote";
+import { livePreviewExtension } from "./livepreview";
 import {
   authorizeUrl,
   DropboxClient,
@@ -63,10 +65,14 @@ export default class ReadingNotesPlugin extends Plugin {
         if (!m) continue;
         const fm = this.app.metadataCache.getCache(ctx.sourcePath)?.frontmatter;
         const bookUid = fm?.app_book as string | undefined;
-        this.decorateAnchor(code, m[1], bookUid);
+        const chip = createSpan();
+        code.replaceWith(chip);
+        fillAnchorChip(this, chip, m[1], bookUid);
       }
       this.renderInlineHighlights(el);
     });
+
+    this.registerEditorExtension(livePreviewExtension(this));
 
     void this.refreshPalette();
   }
@@ -130,40 +136,7 @@ export default class ReadingNotesPlugin extends Plugin {
     }
   }
 
-  /** Replaces an `app:<id>` inline code with an entry chip (page + buttons). */
-  private decorateAnchor(code: HTMLElement, entryId: string, bookUid?: string): void {
-    const chip = createSpan({ cls: "rn-anchor" });
-    code.replaceWith(chip);
-    if (!bookUid) {
-      chip.addClass("rn-anchor-warn");
-      chip.setText("⚠️ 笔记缺少 app_book frontmatter");
-      return;
-    }
-    chip.setText("…");
-    void this.getBook(bookUid)
-      .then((book) => {
-        const entry = book.entries.find((e) => e.id === entryId);
-        chip.empty();
-        if (!entry) {
-          chip.addClass("rn-anchor-warn");
-          chip.setText("⚠️ 源已在 App 删除");
-          return;
-        }
-        chip.createSpan({ cls: "rn-anchor-page", text: entry.page != null ? `p.${entry.page}` : "条目" });
-        if (entry.page != null) {
-          const imgBtn = chip.createEl("button", { cls: "rn-anchor-btn", text: "📷 页图" });
-          imgBtn.addEventListener("click", () => void this.showPageImage(book, entry.page!));
-          const jumpBtn = chip.createEl("button", { cls: "rn-anchor-btn", text: "📖 原文" });
-          jumpBtn.addEventListener("click", () => void this.openAppView({ bookUid, page: entry.page! }));
-        }
-      })
-      .catch((e: Error) => {
-        chip.addClass("rn-anchor-warn");
-        chip.setText(`⚠️ ${e.message}`);
-      });
-  }
-
-  private async showPageImage(book: Book, pageNum: number): Promise<void> {
+  async showPageImage(book: Book, pageNum: number): Promise<void> {
     const page = book.pages.find((p) => p.page === pageNum);
     if (!page?.archive_image) {
       new Notice(`p.${pageNum} 没有页图。`);

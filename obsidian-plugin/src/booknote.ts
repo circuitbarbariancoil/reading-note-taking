@@ -2,12 +2,13 @@ import { App, TFile, normalizePath } from "obsidian";
 import { Book, Entry, entryOrder } from "./types";
 
 /**
- * One note per book. Each app entry occupies one block:
+ * One note per book. Each app entry occupies one block of plain lines
+ * (no blockquote/callout markup):
  *
  *   `app:<id>`
- *   > p.91 · 原文副本（可含 ~={color}=~ 高亮与《》ruby）
- *   > 💬 App 批注
- *   > #tag1 #tag2
+ *   p.91 · 原文副本（可含 ~={color}=~ 高亮与《》ruby）
+ *   💬 App 批注
+ *   #tag1 #tag2
  *
  * Sync is strictly append-only and position-aware: blocks already in the note
  * are NEVER touched (the user may freely rework them); a missing entry is
@@ -24,12 +25,11 @@ export function entryBlock(entry: Entry): string {
   lines.push(`\`app:${entry.id}\``);
   const pageLabel = entry.page != null ? `p.${entry.page}` : "无页码";
   const body = entry.text.split("\n");
-  lines.push(`> ${pageLabel} · ${body[0] ?? ""}`);
-  for (const extra of body.slice(1)) lines.push(`> ${extra}`);
-  if (entry.annotation.trim().length > 0) {
-    for (const a of entry.annotation.split("\n")) lines.push(`> 💬 ${a}`);
-  }
-  if (entry.tags.length > 0) lines.push(`> ${entry.tags.map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ")}`);
+  lines.push(`${pageLabel} · ${body[0] ?? ""}`);
+  for (const extra of body.slice(1)) lines.push(extra);
+  const annotation = entry.annotation.trim();
+  if (annotation.length > 0) lines.push(`💬 ${annotation.split("\n").join(" ")}`);
+  if (entry.tags.length > 0) lines.push(entry.tags.map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" "));
   return lines.join("\n");
 }
 
