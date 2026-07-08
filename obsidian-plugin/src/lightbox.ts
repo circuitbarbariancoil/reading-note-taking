@@ -48,7 +48,7 @@ export class Lightbox extends Modal {
     this.indicator = bar.createDiv({ cls: "rn-lb-indicator" });
     const spacer = bar.createDiv({ cls: "rn-lb-spacer" });
     spacer.style.flex = "1";
-    bar.createSpan({ cls: "rn-lb-hint", text: "滚轮平移 · Ctrl+滚轮缩放 · 拖拽" });
+    bar.createSpan({ cls: "rn-lb-hint", text: "滚轮缩放 · 拖拽平移" });
     this.toolBtn(bar, "zoom-out", "缩小", () => this.zoom.zoomBy(1 / 1.25));
     this.toolBtn(bar, "maximize", "适应窗口 (0)", () => this.zoom.fit());
     this.toolBtn(bar, "zoom-in", "放大", () => this.zoom.zoomBy(1.25));
@@ -58,9 +58,7 @@ export class Lightbox extends Modal {
     this.placeholder = this.stage.createDiv({ cls: "rn-lb-loading", text: "加载中…" });
     this.img = this.stage.createEl("img", { cls: "rn-lb-img" });
     this.img.hide();
-    this.zoom = new ZoomPanController(this.stage, this.img, {
-      onBackdropClick: () => this.close(),
-    });
+    this.zoom = new ZoomPanController(this.stage, this.img);
 
     if (this.opts.paging && this.opts.pages.length > 1) {
       const prev = this.stage.createEl("button", { cls: "rn-lb-nav rn-lb-prev" });
