@@ -107,6 +107,18 @@ class BookRepository(
         }
     }
 
+    /**
+     * Writes the shared palette to Dropbox `config/highlight-colors.json`
+     * (DESIGN.md §1.3) so the Obsidian plugin renders identical colors.
+     */
+    fun syncPaletteToDropbox(palette: com.readingnotes.app.model.HighlightPalette) {
+        val file = File(File(context.filesDir, "config"), "highlight-colors.json")
+        file.parentFile?.mkdirs()
+        file.writeText(BookStore.json.encodeToString(com.readingnotes.app.model.HighlightPalette.serializer(), palette))
+        syncQueueStore.enqueueUpload("/ReadingVault/config/highlight-colors.json", file.absolutePath)
+        DropboxSyncWorker.trigger(context)
+    }
+
     fun loadCurrentBook(): Book? {
         cachedBook?.let { return it }
         val existing = findExistingBookJson() ?: return null

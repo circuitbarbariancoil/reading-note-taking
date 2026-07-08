@@ -209,6 +209,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun savePalette(palette: HighlightPalette) {
         settingsStore.savePalette(palette)
+        bookRepository.syncPaletteToDropbox(palette)
         reloadSettings()
     }
 
