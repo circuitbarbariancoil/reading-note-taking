@@ -95,7 +95,7 @@
 
 /* ── page image lightbox ─────────────────────────────────────────────────── */
 .rn-lightbox-modal {
-  width: 92vw;
+  width: min(760px, 60vw);
   height: 90vh;
   max-width: 92vw;
   max-height: 90vh;
