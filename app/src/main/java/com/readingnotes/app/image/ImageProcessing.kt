@@ -7,13 +7,16 @@ import kotlin.math.roundToInt
 
 /**
  * Two-image pipeline (DESIGN.md §5): a high-res archive image kept for human
- * proofreading, and a downscaled JPEG sent to the LLM. Spike 1 showed a 768px
- * long edge at JPEG q85 matches full-res accuracy at ~40% of the size.
+ * proofreading, and a downscaled JPEG sent to the LLM. Dense vertical pages need
+ * a higher long edge than the original 768px spike value, otherwise small kanji
+ * and ruby blur and the model transcribes only part of the page. 1600px keeps
+ * full detail for every provider (matches Claude's ~1568px image cap) while
+ * staying fast; billing here is per-request, not per-pixel.
  */
 object ImageProcessing {
 
-    const val OCR_LONG_EDGE = 768
-    const val OCR_QUALITY = 85
+    const val OCR_LONG_EDGE = 1600
+    const val OCR_QUALITY = 90
     const val ARCHIVE_LONG_EDGE = 2000
     const val ARCHIVE_QUALITY = 90
 

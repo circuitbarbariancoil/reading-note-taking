@@ -27,7 +27,7 @@ class GeminiOcrClient(
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    /** Runs OCR on a JPEG-encoded page image (already downscaled to ~768px). */
+    /** Runs OCR on a JPEG-encoded page image (downscaled to ~1600px long edge). */
     suspend fun ocrPage(jpegBytes: ByteArray): String = withContext(Dispatchers.IO) {
         val b64 = android.util.Base64.encodeToString(jpegBytes, android.util.Base64.NO_WRAP)
 
@@ -43,6 +43,10 @@ class GeminiOcrClient(
                     put(JSONObject().put("text", PROMPT))
                 })
             }))
+            put("generationConfig", JSONObject().apply {
+                put("maxOutputTokens", MAX_OUTPUT_TOKENS)
+                put("temperature", 0)
+            })
         }.toString()
 
         val url = "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -116,6 +120,9 @@ class GeminiOcrClient(
 
     companion object {
         const val DEFAULT_MODEL = "gemini-3-flash-preview"
+
+        /** Upper bound on OCR output so a dense full page is never truncated. */
+        const val MAX_OUTPUT_TOKENS = 8192
 
         /** Strict prompt; mirrors the validated Spike 1 prompt. */
         val PROMPT = """
