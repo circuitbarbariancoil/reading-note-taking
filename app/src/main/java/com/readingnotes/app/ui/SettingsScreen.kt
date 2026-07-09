@@ -32,7 +32,6 @@ fun SettingsScreen(
     onConnectDropbox: () -> Unit,
     onDisconnectDropbox: () -> Unit,
     onProviderSettings: () -> Unit,
-    onOpenPalette: () -> Unit,
     onRestoreFromDropbox: () -> Unit,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
@@ -87,13 +86,6 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("模型设置")
-        }
-
-        Button(
-            onClick = onOpenPalette,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("高亮色板")
         }
 
         HorizontalDivider()

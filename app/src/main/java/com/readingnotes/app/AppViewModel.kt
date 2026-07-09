@@ -98,7 +98,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var ocrErrorMessage by mutableStateOf<String?>(null)
     var entryBrowserBookUid by mutableStateOf<String?>(null)
     var captureFromWorkbench = false
-    var paletteFromSettings by mutableStateOf(false)
     var pdfImportUri by mutableStateOf<Uri?>(null)
     var captureShotCount by mutableStateOf(0)
     var captureSaving by mutableStateOf(false)

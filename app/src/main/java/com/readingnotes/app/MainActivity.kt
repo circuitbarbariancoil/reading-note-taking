@@ -133,7 +133,7 @@ class MainActivity : ComponentActivity() {
                     target
                 }
                 ShellScreen.Workbench -> ShellScreen.PageList
-                ShellScreen.Palette -> if (viewModel.paletteFromSettings) ShellScreen.Settings else ShellScreen.Workbench
+                ShellScreen.Palette -> ShellScreen.Workbench
                 ShellScreen.Toc -> ShellScreen.PageList
                 ShellScreen.TocEditor -> ShellScreen.Toc
                 ShellScreen.TocCapture -> ShellScreen.Toc
@@ -336,10 +336,6 @@ class MainActivity : ComponentActivity() {
                 onConnectDropbox = { startDropboxConnect() },
                 onDisconnectDropbox = { viewModel.clearDropboxCredential() },
                 onProviderSettings = { viewModel.currentScreen = ShellScreen.ProviderSettings },
-                onOpenPalette = {
-                    viewModel.paletteFromSettings = true
-                    viewModel.currentScreen = ShellScreen.Palette
-                },
                 onRestoreFromDropbox = { viewModel.restoreFromDropbox() },
                 onExportBackup = { viewModel.exportFullBackup { zipFile -> shareBackup(zipFile) } },
                 onImportBackup = { importBackupLauncher.launch("application/zip") },
@@ -388,10 +384,7 @@ class MainActivity : ComponentActivity() {
                             viewModel.activeBook = viewModel.bookRepository.loadBook(book.uid) ?: book
                             viewModel.currentScreen = ShellScreen.PageList
                         },
-                        onOpenPalette = {
-                            viewModel.paletteFromSettings = false
-                            viewModel.currentScreen = ShellScreen.Palette
-                        },
+                        onOpenPalette = { viewModel.currentScreen = ShellScreen.Palette },
                         onCapture = { viewModel.openCapture(fromWorkbench = true) },
                         onOcrPage = { page -> viewModel.ocrPage(page) },
                         onChangePageNumber = { page, newNumber -> viewModel.changePageNumber(page, newNumber) },
@@ -412,10 +405,7 @@ class MainActivity : ComponentActivity() {
             ShellScreen.Palette -> PaletteScreen(
                 palette = viewModel.appSettings.palette,
                 onSave = { palette -> viewModel.savePalette(palette) },
-                onBack = {
-                    viewModel.currentScreen =
-                        if (viewModel.paletteFromSettings) ShellScreen.Settings else ShellScreen.Workbench
-                },
+                onBack = { viewModel.currentScreen = ShellScreen.Workbench },
             )
 
             ShellScreen.EntryBrowser -> {
