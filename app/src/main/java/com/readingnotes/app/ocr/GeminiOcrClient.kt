@@ -45,7 +45,6 @@ class GeminiOcrClient(
             }))
             put("generationConfig", JSONObject().apply {
                 put("maxOutputTokens", MAX_OUTPUT_TOKENS)
-                put("temperature", 0)
             })
         }.toString()
 

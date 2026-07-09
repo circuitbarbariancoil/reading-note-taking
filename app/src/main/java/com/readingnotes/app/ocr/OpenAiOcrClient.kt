@@ -45,7 +45,6 @@ class OpenAiOcrClient(
             put("model", model)
             put("messages", JSONArray().put(userMessage))
             put("max_tokens", GeminiOcrClient.MAX_OUTPUT_TOKENS)
-            put("temperature", 0)
         }.toString()
 
         val url = "${baseUrl.trimEnd('/')}/v1/chat/completions"
