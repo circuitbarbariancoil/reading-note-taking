@@ -53,17 +53,36 @@ fun PaletteScreen(
 
     fun commit() = onSave(HighlightPalette(rows.filter { it.name.isNotBlank() }.toList()))
 
+    /** Swap the active row at [index] with its nearest active neighbour above/below. */
+    fun move(index: Int, up: Boolean) {
+        val step = if (up) -1 else 1
+        var j = index + step
+        while (j in rows.indices && !rows[j].active) j += step
+        if (j in rows.indices) {
+            val tmp = rows[index]; rows[index] = rows[j]; rows[j] = tmp
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(Paper).padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("‹", fontSize = 26.sp, color = SumiSoft, modifier = Modifier.clickable { commit(); onBack() }.padding(end = 8.dp))
             Text("高亮色板", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sumi)
         }
+        Spacer(Modifier.size(6.dp))
+        Text("从上到下的顺序 = 输入面板里从左到右的顺序，用 ↑↓ 调整。", fontSize = 12.sp, color = SumiSoft)
         Spacer(Modifier.size(16.dp))
 
+        val activeIndices = rows.indices.filter { rows[it].active }
         rows.forEachIndexed { index, color ->
             if (!color.active) return@forEachIndexed
+            val order = activeIndices.indexOf(index)
             ColorRow(
                 color = color,
+                position = order + 1,
+                canMoveUp = order > 0,
+                canMoveDown = order < activeIndices.size - 1,
+                onMoveUp = { move(index, up = true) },
+                onMoveDown = { move(index, up = false) },
                 onChange = { rows[index] = it },
                 onDelete = { rows[index] = color.copy(active = false) },
             )
@@ -146,6 +165,11 @@ fun PaletteScreen(
 @Composable
 private fun ColorRow(
     color: HighlightColor,
+    position: Int,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onChange: (HighlightColor) -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -155,9 +179,24 @@ private fun ColorRow(
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(modifier = Modifier.size(26.dp).clip(CircleShape).background(parsed))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                "↑", fontSize = 15.sp, color = if (canMoveUp) SumiSoft else Hairline,
+                modifier = Modifier.clickable(enabled = canMoveUp, onClick = onMoveUp).padding(horizontal = 4.dp),
+            )
+            Text(
+                "↓", fontSize = 15.sp, color = if (canMoveDown) SumiSoft else Hairline,
+                modifier = Modifier.clickable(enabled = canMoveDown, onClick = onMoveDown).padding(horizontal = 4.dp),
+            )
+        }
+        Box(modifier = Modifier.size(26.dp).clip(CircleShape).background(parsed), contentAlignment = Alignment.Center) {
+            Text("$position", fontSize = 11.sp, color = Color.White.copy(alpha = 0.9f))
+        }
         Field(color.name, "色名", Modifier.weight(1f)) { onChange(color.copy(name = it.trim())) }
         Field(color.css, "#色值", Modifier.weight(1f)) { onChange(color.copy(css = it.trim())) }
         Text("✕", fontSize = 16.sp, color = SumiSoft, modifier = Modifier.clickable(onClick = onDelete).padding(4.dp))
