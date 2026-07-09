@@ -28,6 +28,7 @@ interface ReadingNotesSettings {
   appKey: string;
   refreshToken: string;
   notesFolder: string;
+  renderHighlightColors: boolean;
 }
 
 const DEFAULT_SETTINGS: ReadingNotesSettings = {
@@ -35,6 +36,7 @@ const DEFAULT_SETTINGS: ReadingNotesSettings = {
   appKey: "tju8txxd67454n0",
   refreshToken: "",
   notesFolder: "ReadingNotes",
+  renderHighlightColors: true,
 };
 
 export default class ReadingNotesPlugin extends Plugin {
@@ -71,7 +73,7 @@ export default class ReadingNotesPlugin extends Plugin {
         code.replaceWith(chip);
         fillAnchorChip(this, chip, m[1], bookUid);
       }
-      this.renderInlineHighlights(el);
+      if (this.settings.renderHighlightColors) this.renderInlineHighlights(el);
     });
 
     this.registerEditorExtension(livePreviewExtension(this));
@@ -280,6 +282,17 @@ class ReadingNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.plugin.resetClient();
           this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("渲染高亮颜色")
+      .setDesc("给 ~={色}文字=~ 上色。若你用自己的渲染插件处理这套语法，可关闭本插件的上色，避免重复渲染（锚行芯片不受影响）。")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.renderHighlightColors).onChange(async (v) => {
+          this.plugin.settings.renderHighlightColors = v;
+          await this.plugin.saveSettings();
+          this.app.workspace.updateOptions();
         }),
       );
 

@@ -103,6 +103,8 @@ export function livePreviewExtension(plugin: ReadingNotesPlugin) {
             });
           }
 
+          if (!plugin.settings.renderHighlightColors) continue;
+
           for (const m of text.matchAll(HIGHLIGHT_SRC_RE)) {
             const start = from + m.index!;
             const end = start + m[0].length;
