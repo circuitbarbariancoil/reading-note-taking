@@ -44,7 +44,7 @@ class ClaudeOcrClient(
         }
         val body = JSONObject().apply {
             put("model", model)
-            put("max_tokens", 4096)
+            put("max_tokens", GeminiOcrClient.MAX_OUTPUT_TOKENS)
             put("messages", JSONArray().put(userMessage))
         }.toString()
 

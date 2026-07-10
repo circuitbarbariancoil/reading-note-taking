@@ -44,7 +44,7 @@ class OpenAiOcrClient(
         val body = JSONObject().apply {
             put("model", model)
             put("messages", JSONArray().put(userMessage))
-            put("max_tokens", 4096)
+            put("max_tokens", GeminiOcrClient.MAX_OUTPUT_TOKENS)
         }.toString()
 
         val url = "${baseUrl.trimEnd('/')}/v1/chat/completions"
