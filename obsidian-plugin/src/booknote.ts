@@ -20,13 +20,18 @@ import { Book, Entry, entryOrder } from "./types";
 export const ANCHOR_RE = /^`app:([A-Za-z0-9_-]+)`\s*$/;
 export const ANCHOR_INLINE_RE = /^app:([A-Za-z0-9_-]+)$/;
 
-/** The annotation, unless it merely repeats the entry's tags. */
+/**
+ * The annotation with any `#tag` tokens that duplicate the entry's own tags
+ * removed (tags are shown on their own line/row) — "" when nothing remains.
+ */
 export function displayAnnotation(entry: Entry): string {
-  const annotation = entry.annotation.trim();
-  if (!annotation) return "";
   const norm = (s: string) => s.replace(/^#/, "").trim();
-  const isJustTags = annotation.split(/\s+/).every((w) => entry.tags.some((t) => norm(t) === norm(w)));
-  return isJustTags ? "" : annotation;
+  const tags = new Set(entry.tags.map(norm));
+  return entry.annotation
+    .trim()
+    .split(/\s+/)
+    .filter((w) => !(w.startsWith("#") && tags.has(norm(w))) && !tags.has(w))
+    .join(" ");
 }
 
 export function entryBlock(entry: Entry): string {
