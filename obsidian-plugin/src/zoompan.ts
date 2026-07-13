@@ -1,4 +1,7 @@
-export type ZoomPanOptions = Record<string, never>;
+export interface ZoomPanOptions {
+  /** Called after every zoom change with the zoom relative to fit (100 = fit). */
+  onZoom?: (percent: number) => void;
+}
 
 const MIN_FACTOR = 0.8;
 const MAX_SCALE = 8;
@@ -23,6 +26,7 @@ export class ZoomPanController {
   constructor(
     private stage: HTMLElement,
     private img: HTMLImageElement,
+    private opts: ZoomPanOptions = {},
   ) {
     this.stage.addEventListener("wheel", this.onWheel, { passive: false });
     this.stage.addEventListener("pointerdown", this.onPointerDown);
@@ -70,6 +74,7 @@ export class ZoomPanController {
     this.ty = cy - k * (cy - this.ty);
     this.scale = clamped;
     this.apply();
+    this.opts.onZoom?.(Math.round((this.scale / this.fitScale) * 100));
   }
 
   private onWheel = (e: WheelEvent): void => {

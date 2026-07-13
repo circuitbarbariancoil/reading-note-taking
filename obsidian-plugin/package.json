@@ -1,6 +1,6 @@
 {
   "name": "reading-notes-obsidian",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Obsidian read-only companion plugin for the reading-note-taking Android app",
   "main": "main.js",
   "scripts": {

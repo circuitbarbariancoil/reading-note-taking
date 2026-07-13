@@ -2,7 +2,8 @@ import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import { displayAnnotation } from "./booknote";
 import { renderMarkupText, renderPageText, stripRuby } from "./markup";
 import type ReadingNotesPlugin from "./main";
-import { Book, Entry } from "./types";
+import type { EntrySortMode } from "./main";
+import { Book, Entry, EntryKind, entryOrder, entryOrderNewest, isNotebook } from "./types";
 
 export const APP_VIEW_TYPE = "reading-notes-app-view";
 
@@ -30,6 +31,9 @@ export class ReadingAppView extends ItemView {
   private pending: NavTarget | null = null;
   private flashHighlightId: string | null = null;
   private flashKeyword: string | null = null;
+  private entryKind: EntryKind | "all" = "all";
+  private entryTag: string | null = null;
+  private entrySort: EntrySortMode = "book";
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -77,6 +81,13 @@ export class ReadingAppView extends ItemView {
     return el;
   }
 
+  /** Iconified empty-state placeholder. */
+  private emptyState(parent: HTMLElement, icon: string, text: string): void {
+    const box = parent.createDiv({ cls: "rn-empty" });
+    setIcon(box.createDiv({ cls: "rn-empty-icon" }), icon);
+    box.createDiv({ cls: "rn-empty-text", text });
+  }
+
   // ── bookshelf ────────────────────────────────────────────────────────────
 
   private async renderShelf(): Promise<void> {
@@ -93,11 +104,13 @@ export class ReadingAppView extends ItemView {
       try {
         const uids = await this.plugin.client().listBookUids();
         skeleton.remove();
-        if (uids.length === 0) grid.createDiv({ cls: "rn-dim", text: "Dropbox 上还没有书。" });
+        if (uids.length === 0) this.emptyState(grid, "library", "Dropbox 上还没有书。");
+        // Notebook is pinned first, the rest keep folder order.
+        uids.sort((a, b) => Number(isNotebook(b)) - Number(isNotebook(a)));
         await Promise.all(uids.map((uid) => this.renderShelfCard(grid, uid)));
       } catch (e) {
         skeleton.remove();
-        grid.createDiv({ cls: "rn-dim", text: `加载失败：${(e as Error).message}` });
+        this.emptyState(grid, "cloud-off", `加载失败：${(e as Error).message}`);
       }
     };
     refresh.addEventListener("click", () => void load());
@@ -110,6 +123,19 @@ export class ReadingAppView extends ItemView {
     const meta = card.createDiv({ cls: "rn-card-meta" });
     meta.createDiv({ cls: "rn-card-title", text: uid });
     card.addEventListener("click", () => void this.openBook(uid));
+    if (isNotebook(uid)) {
+      cover.addClass("rn-cover-notebook");
+      setIcon(cover, "notebook-pen");
+      try {
+        const book = await this.plugin.getBook(uid);
+        meta.empty();
+        meta.createDiv({ cls: "rn-card-title", text: book.title });
+        meta.createDiv({ cls: "rn-card-stats" }).createSpan({ text: `${book.entries.length} 条` });
+      } catch (_e) {
+        meta.createDiv({ cls: "rn-dim", text: "读取失败" });
+      }
+      return;
+    }
     try {
       const book = await this.plugin.getBook(uid);
       cover.setText(book.title.slice(0, 2));
@@ -151,8 +177,12 @@ export class ReadingAppView extends ItemView {
       return;
     }
     this.currentPage = page ?? this.book.pages[0]?.page ?? null;
-    this.tab = "read";
+    this.tab = isNotebook(this.book) ? "entries" : "read";
     this.searchQuery = "";
+    this.vertical = this.plugin.settings.defaultVertical;
+    this.entryKind = "all";
+    this.entryTag = null;
+    this.entrySort = isNotebook(this.book) ? "newest" : this.plugin.settings.entrySort;
     this.renderBook();
   }
 
@@ -167,9 +197,12 @@ export class ReadingAppView extends ItemView {
     back.addEventListener("click", () => void this.renderShelf());
     const titleBox = header.createDiv({ cls: "rn-header-book" });
     titleBox.createDiv({ cls: "rn-header-title", text: book.title });
+    const notebook = isNotebook(book);
     titleBox.createDiv({
       cls: "rn-header-sub",
-      text: `${book.author ? book.author + " · " : ""}${book.pages.length} 页 · ${book.entries.length} 条`,
+      text: notebook
+        ? `${book.entries.length} 条`
+        : `${book.author ? book.author + " · " : ""}${book.pages.length} 页 · ${book.entries.length} 条`,
     });
 
     const search = header.createEl("input", { cls: "rn-search", type: "search" });
@@ -180,21 +213,26 @@ export class ReadingAppView extends ItemView {
       this.renderMain(main);
     });
 
-    const tabs = el.createDiv({ cls: "rn-tabs" });
-    const tabDefs: { id: BookTab; label: string }[] = [
-      { id: "read", label: "阅读" },
-      { id: "toc", label: "目录" },
-      { id: "entries", label: `条目 ${book.entries.length}` },
-    ];
-    for (const t of tabDefs) {
-      const btn = tabs.createEl("button", { cls: "rn-tab", text: t.label });
-      if (t.id === this.tab) btn.addClass("rn-tab-active");
-      btn.addEventListener("click", () => {
-        this.tab = t.id;
-        this.searchQuery = "";
-        search.value = "";
-        this.renderBook();
-      });
+    // The notebook has no pages/toc — it is a flat entry stream, no tab bar.
+    if (notebook) this.tab = "entries";
+    if (!notebook) {
+      const tabs = el.createDiv({ cls: "rn-tabs" });
+      const tabDefs: { id: BookTab; label: string; count?: number }[] = [
+        { id: "read", label: "阅读" },
+        { id: "toc", label: "目录" },
+        { id: "entries", label: "条目", count: book.entries.length },
+      ];
+      for (const t of tabDefs) {
+        const btn = tabs.createEl("button", { cls: "rn-tab", text: t.label });
+        if (t.count != null) btn.createSpan({ cls: "rn-tab-count", text: `${t.count}` });
+        if (t.id === this.tab) btn.addClass("rn-tab-active");
+        btn.addEventListener("click", () => {
+          this.tab = t.id;
+          this.searchQuery = "";
+          search.value = "";
+          this.renderBook();
+        });
+      }
     }
 
     const main = el.createDiv({ cls: "rn-book-main" });
@@ -235,7 +273,7 @@ export class ReadingAppView extends ItemView {
     }
 
     if (this.currentPage == null) {
-      content.createDiv({ cls: "rn-dim", text: "这本书还没有页。" });
+      this.emptyState(content, "file-image", "这本书还没有页。");
       return;
     }
     void this.renderPage(content, this.currentPage);
@@ -293,6 +331,8 @@ export class ReadingAppView extends ItemView {
       const dirBtn = nav.createEl("button", { cls: "rn-btn rn-btn-quiet", text: this.vertical ? "竖排" : "横排" });
       dirBtn.addEventListener("click", () => {
         this.vertical = !this.vertical;
+        this.plugin.settings.defaultVertical = this.vertical;
+        void this.plugin.saveSettings();
         void this.renderPage(content, pageNum);
       });
     }
@@ -386,7 +426,7 @@ export class ReadingAppView extends ItemView {
     const book = this.book!;
     const wrap = main.createDiv({ cls: "rn-toc" });
     if (book.sections.length === 0) {
-      wrap.createDiv({ cls: "rn-dim", text: "这本书还没有目录。" });
+      this.emptyState(wrap, "list-tree", "这本书还没有目录。");
       return;
     }
     for (const s of [...book.sections].sort((a, b) => a.start_page - b.start_page)) {
@@ -413,13 +453,98 @@ export class ReadingAppView extends ItemView {
 
   private renderEntries(main: HTMLElement): void {
     const book = this.book!;
+    const notebook = isNotebook(book);
     const wrap = main.createDiv({ cls: "rn-entries" });
     if (book.entries.length === 0) {
-      wrap.createDiv({ cls: "rn-dim", text: "还没有条目。" });
+      this.emptyState(wrap, "sticky-note", "还没有条目。");
       return;
     }
-    const sorted = [...book.entries].sort((a, b) => (a.page ?? 1e9) - (b.page ?? 1e9) || a.src_start - b.src_start);
-    for (const e of sorted) this.renderEntryCard(wrap, e, true);
+
+    this.renderEntryFilters(wrap, book, notebook);
+
+    let entries = book.entries.filter(
+      (e) =>
+        (this.entryKind === "all" || e.kind === this.entryKind) &&
+        (this.entryTag == null || e.tags.some((t) => this.normTag(t) === this.entryTag)),
+    );
+    if (this.entrySort === "book" && !notebook) entries = [...entries].sort(entryOrder);
+    else if (this.entrySort === "oldest") entries = [...entries].sort((a, b) => -entryOrderNewest(a, b));
+    else entries = [...entries].sort(entryOrderNewest);
+
+    if (entries.length === 0) {
+      this.emptyState(wrap, "filter-x", "没有符合筛选的条目。");
+      return;
+    }
+    for (const e of entries) this.renderEntryCard(wrap, e, !notebook);
+  }
+
+  private normTag(t: string): string {
+    return t.startsWith("#") ? t.slice(1) : t;
+  }
+
+  /** Kind chips + tag chips + sort selector above the entry list. */
+  private renderEntryFilters(wrap: HTMLElement, book: Book, notebook: boolean): void {
+    const bar = wrap.createDiv({ cls: "rn-filterbar" });
+
+    const kinds = bar.createDiv({ cls: "rn-chip-row" });
+    const kindDefs: { id: EntryKind | "all"; label: string }[] = [
+      { id: "all", label: "全部" },
+      { id: "highlight", label: "高亮" },
+      { id: "excerpt", label: "摘录" },
+      { id: "note", label: "笔记" },
+    ];
+    for (const k of kindDefs) {
+      const n = k.id === "all" ? book.entries.length : book.entries.filter((e) => e.kind === k.id).length;
+      if (k.id !== "all" && n === 0) continue;
+      const chip = kinds.createEl("button", { cls: "rn-chip", text: k.label });
+      chip.createSpan({ cls: "rn-chip-count", text: `${n}` });
+      if (this.entryKind === k.id) chip.addClass("rn-chip-active");
+      chip.addEventListener("click", () => {
+        this.entryKind = k.id;
+        this.renderBook();
+      });
+    }
+
+    bar.createDiv({ cls: "rn-spacer" });
+
+    const sort = bar.createEl("select", { cls: "dropdown rn-sort" });
+    const sortDefs: { id: EntrySortMode; label: string }[] = [
+      ...(notebook ? [] : [{ id: "book" as EntrySortMode, label: "书序" }]),
+      { id: "newest", label: "新→旧" },
+      { id: "oldest", label: "旧→新" },
+    ];
+    for (const s of sortDefs) {
+      const opt = sort.createEl("option", { text: s.label });
+      opt.value = s.id;
+    }
+    sort.value = this.entrySort;
+    sort.addEventListener("change", () => {
+      this.entrySort = sort.value as EntrySortMode;
+      if (!notebook) {
+        this.plugin.settings.entrySort = this.entrySort;
+        void this.plugin.saveSettings();
+      }
+      this.renderBook();
+    });
+
+    const tags = new Map<string, number>();
+    for (const e of book.entries)
+      for (const t of e.tags) {
+        const k = this.normTag(t);
+        tags.set(k, (tags.get(k) ?? 0) + 1);
+      }
+    if (tags.size > 0) {
+      const tagRow = wrap.createDiv({ cls: "rn-chip-row rn-tag-row" });
+      for (const [t, n] of [...tags.entries()].sort((a, b) => b[1] - a[1])) {
+        const chip = tagRow.createEl("button", { cls: "rn-chip rn-chip-tag", text: `#${t}` });
+        chip.createSpan({ cls: "rn-chip-count", text: `${n}` });
+        if (this.entryTag === t) chip.addClass("rn-chip-active");
+        chip.addEventListener("click", () => {
+          this.entryTag = this.entryTag === t ? null : t;
+          this.renderBook();
+        });
+      }
+    }
   }
 
   private renderEntryCard(wrap: HTMLElement, entry: Entry, jumpable: boolean): void {
@@ -430,10 +555,23 @@ export class ReadingAppView extends ItemView {
     const body = card.createDiv({ cls: "rn-entry-text" });
     renderMarkupText(body, entry.text, this.plugin.palette);
     const annotation = displayAnnotation(entry);
-    if (annotation) card.createDiv({ cls: "rn-entry-annot", text: `💬 ${annotation}` });
+    if (annotation) {
+      const annotEl = card.createDiv({ cls: "rn-entry-annot" });
+      setIcon(annotEl.createSpan({ cls: "rn-entry-annot-icon" }), "message-square-text");
+      annotEl.createSpan({ text: annotation });
+    }
     if (entry.tags.length > 0) {
       const tagsEl = card.createDiv({ cls: "rn-entry-tags" });
-      for (const t of entry.tags) tagsEl.createSpan({ cls: "rn-tag", text: t.startsWith("#") ? t : `#${t}` });
+      for (const t of entry.tags) {
+        const norm = this.normTag(t);
+        const tagEl = tagsEl.createSpan({ cls: "rn-tag", text: `#${norm}` });
+        tagEl.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.entryTag = this.entryTag === norm ? null : norm;
+          this.tab = "entries";
+          this.renderBook();
+        });
+      }
     }
     if (jumpable && entry.page != null) {
       card.addEventListener("click", () => {

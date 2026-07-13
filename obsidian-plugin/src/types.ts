@@ -87,6 +87,13 @@ export const DEFAULT_PALETTE: HighlightPalette = {
 
 export const EXCERPT_CSS = "#7C756B";
 
+/** Fixed uid of the app's singleton page-less notebook (BookRepository.NOTEBOOK_UID). */
+export const NOTEBOOK_UID = "notebook-default";
+
+export function isNotebook(bookOrUid: Book | string): boolean {
+  return (typeof bookOrUid === "string" ? bookOrUid : bookOrUid.uid) === NOTEBOOK_UID;
+}
+
 export const VAULT_ROOT = "/ReadingVault";
 export const BOOKS_ROOT = `${VAULT_ROOT}/books`;
 export const PALETTE_PATH = `${VAULT_ROOT}/config/highlight-colors.json`;
@@ -98,4 +105,9 @@ export function entryOrder(a: Entry, b: Entry): number {
   if (pa !== pb) return pa - pb;
   if (a.src_start !== b.src_start) return a.src_start - b.src_start;
   return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+}
+
+/** Newest first by creation time (notebook default / 时间排序). */
+export function entryOrderNewest(a: Entry, b: Entry): number {
+  return a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0;
 }
