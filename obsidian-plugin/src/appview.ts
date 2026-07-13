@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import { displayAnnotation } from "./booknote";
 import { renderMarkupText, renderPageText, stripRuby } from "./markup";
 import type ReadingNotesPlugin from "./main";
@@ -558,7 +558,8 @@ export class ReadingAppView extends ItemView {
     if (annotation) {
       const annotEl = card.createDiv({ cls: "rn-entry-annot" });
       setIcon(annotEl.createSpan({ cls: "rn-entry-annot-icon" }), "message-square-text");
-      annotEl.createSpan({ text: annotation });
+      const md = annotEl.createDiv({ cls: "rn-entry-annot-md" });
+      void MarkdownRenderer.render(this.plugin.app, annotation, md, "", this);
     }
     if (entry.tags.length > 0) {
       const tagsEl = card.createDiv({ cls: "rn-entry-tags" });
@@ -575,6 +576,8 @@ export class ReadingAppView extends ItemView {
     }
     if (jumpable && entry.page != null) {
       card.addEventListener("click", () => {
+        // Don't hijack a text-selection drag as a jump.
+        if (window.getSelection()?.toString()) return;
         this.currentPage = entry.page!;
         this.tab = "read";
         this.pageMode = "text";

@@ -709,6 +709,15 @@
   background: var(--background-primary);
 }
 
+.rn-entry-card {
+  user-select: text;
+}
+
+.rn-entry-text {
+  user-select: text;
+  cursor: text;
+}
+
 .rn-clickable {
   cursor: pointer;
   transition: box-shadow 0.12s ease;
@@ -764,6 +773,16 @@
 .rn-entry-annot-icon svg {
   width: 14px;
   height: 14px;
+}
+
+/* annotation is rendered as real Markdown; keep it inline-looking */
+.rn-entry-annot-md {
+  flex: 1;
+  min-width: 0;
+}
+
+.rn-entry-annot-md p {
+  margin: 0;
 }
 
 .rn-entry-tags {
