@@ -110,6 +110,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val processQueue = mutableStateListOf<ProcessItem>()
     var notebookBook by mutableStateOf<Book?>(null)
     var notebookDraft by mutableStateOf<Entry?>(null)
+
+    /** Every tag used anywhere (all books + notebook), most-used first, for editor autocomplete. */
+    fun knownTags(): List<String> =
+        (books + listOfNotNull(notebookBook))
+            .asSequence()
+            .flatMap { it.entries.asSequence() }
+            .flatMap { it.tags.asSequence() }
+            .map { it.removePrefix("#").trim() }
+            .filter { it.isNotEmpty() }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .map { it.key }
     var entryBrowserOrigin by mutableStateOf(ShellScreen.BookShelf)
     val entryBrowserListState = androidx.compose.foundation.lazy.LazyListState()
 

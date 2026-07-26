@@ -97,6 +97,7 @@ fun WorkbenchScreen(
     onRefreshBooks: () -> Unit = {},
     focusRange: IntRange? = null,
     focusIsExcerpt: Boolean = false,
+    knownTags: List<String> = emptyList(),
 ) {
     val context = LocalContext.current
     var book by remember(initialBook) { mutableStateOf(initialBook) }
@@ -487,7 +488,7 @@ fun WorkbenchScreen(
             EntryEditor(
                 entry = entry,
                 palette = settings.palette,
-                knownTags = book.entries.flatMap { it.tags }.distinct().sorted(),
+                knownTags = knownTags,
                 onSave = { updated ->
                     save(book.copy(entries = book.entries.map { if (it.id == updated.id) updated else it }))
                     editingEntryId = null
@@ -585,6 +586,20 @@ private fun PageBar(
     }
 }
 
+/** A pill-shaped text action with a ≥44dp touch target, used across the floating bars. */
+@Composable
+private fun BarTextButton(label: String, onClick: () -> Unit, color: Color = Accent) {
+    Text(
+        label,
+        fontSize = 15.sp,
+        color = color,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    )
+}
+
 @Composable
 private fun SelectionBar(
     colors: List<com.readingnotes.app.model.HighlightColor>,
@@ -595,25 +610,32 @@ private fun SelectionBar(
 ) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Color.White)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         colors.forEach { c ->
             Box(
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
-                    .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent))
                     .clickable { onHighlight(c.name) },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent)),
+                )
+            }
         }
-        Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
-        Text("摘录", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onExcerpt))
-        Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
-        Text("搜索", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onSearch))
+        Box(modifier = Modifier.width(1.dp).height(24.dp).background(Hairline))
+        BarTextButton("摘录", onExcerpt)
+        Box(modifier = Modifier.width(1.dp).height(24.dp).background(Hairline))
+        BarTextButton("搜索", onSearch)
     }
 }
 
@@ -636,11 +658,11 @@ private fun HighlightActionBar(
         // Color picker row
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(Color.White)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // Plain excerpts have no palette color, so no color picker is shown.
             if (onChangeColor != null) {
@@ -648,28 +670,29 @@ private fun HighlightActionBar(
                     val isActive = c.name == currentColor
                     Box(
                         modifier = Modifier
-                            .size(if (isActive) 28.dp else 24.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
-                            .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent))
-                            .then(
-                                if (isActive) Modifier.clip(CircleShape).background(Color.Transparent)
-                                else Modifier
-                            )
                             .clickable { if (!isActive) onChangeColor(c.name) },
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (isActive) {
-                            Text("✓", fontSize = 12.sp, color = Color.White)
+                        Box(
+                            modifier = Modifier
+                                .size(if (isActive) 32.dp else 28.dp)
+                                .clip(CircleShape)
+                                .background(runCatching { Color(android.graphics.Color.parseColor(c.css)) }.getOrDefault(Accent)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isActive) Text("✓", fontSize = 13.sp, color = Color.White)
                         }
                     }
                 }
-                Box(modifier = Modifier.width(1.dp).height(22.dp).background(Hairline))
+                Box(modifier = Modifier.width(1.dp).height(24.dp).background(Hairline))
             }
             if (onViewEntry != null) {
-                Text("条目", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onViewEntry))
+                BarTextButton("条目", onViewEntry)
             }
-            Text("搜索", fontSize = 14.sp, color = Accent, modifier = Modifier.clickable(onClick = onSearch))
-            Text("删除", fontSize = 14.sp, color = Color(0xFFB3524A), modifier = Modifier.clickable(onClick = onDelete))
+            BarTextButton("搜索", onSearch)
+            BarTextButton("删除", onDelete, color = Color(0xFFB3524A))
         }
     }
 }

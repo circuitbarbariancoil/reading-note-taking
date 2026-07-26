@@ -398,6 +398,7 @@ class MainActivity : ComponentActivity() {
                         onRefreshBooks = { viewModel.refreshBooks() },
                         focusRange = viewModel.workbenchFocus,
                         focusIsExcerpt = viewModel.workbenchFocusIsExcerpt,
+                        knownTags = viewModel.knownTags(),
                     )
                 }
             }
@@ -466,7 +467,7 @@ class MainActivity : ComponentActivity() {
                     EntryEditor(
                         entry = draft,
                         palette = viewModel.appSettings.palette,
-                        knownTags = notebook?.entries.orEmpty().flatMap { it.tags }.distinct().sorted(),
+                        knownTags = viewModel.knownTags(),
                         onSave = { updated -> viewModel.saveNewNoteEntry(updated) },
                         onDismiss = {
                             viewModel.notebookDraft = null
@@ -486,7 +487,7 @@ class MainActivity : ComponentActivity() {
                         EntryEditor(
                             entry = entry,
                             palette = viewModel.appSettings.palette,
-                            knownTags = book.entries.flatMap { it.tags }.distinct().sorted(),
+                            knownTags = viewModel.knownTags(),
                             onSave = { updated ->
                                 if (isNotebookEntry) viewModel.saveEditedNoteEntry(updated)
                                 else viewModel.saveEditedEntry(updated)
