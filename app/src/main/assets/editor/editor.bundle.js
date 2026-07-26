@@ -28359,11 +28359,14 @@
   function tagCompletion(context) {
     const before = context.matchBefore(/#[^\s#]*/);
     if (!before || (before.from === before.to && !context.explicit)) return null;
-    const q = before.text.slice(1);
-    const options = KNOWN_TAGS.filter((tag) => tag.startsWith(q)).map((tag) => ({
-      label: "#" + tag,
-      apply: "#" + tag,
-    }));
+    const q = before.text.slice(1).toLowerCase();
+    // Prefix matches first, then substring matches, so "词" surfaces "日语/词汇".
+    const scored = KNOWN_TAGS.map((tag) => {
+      const at = tag.toLowerCase().indexOf(q);
+      return { tag, at };
+    }).filter((s) => s.at !== -1);
+    scored.sort((a, b) => a.at - b.at);
+    const options = scored.map(({ tag }) => ({ label: "#" + tag, apply: "#" + tag }));
     return { from: before.from, options, validFor: /^#[^\s#]*$/ };
   }
 
@@ -28398,6 +28401,19 @@
     ".cm-cursor": { borderLeftColor: "#3C5468" },
   });
 
+  // IME composition (Chinese/Japanese) suppresses activateOnTyping, so a "#"
+  // committed via the IME never opens the tag list. Kick it open explicitly once
+  // the cursor sits at the end of a "#word" token.
+  const imeTagTrigger = EditorView.updateListener.of((update) => {
+    if (!update.docChanged) return;
+    const view = update.view;
+    const head = view.state.selection.main.head;
+    const before = view.state.doc.sliceString(Math.max(0, head - 40), head);
+    if (/#[^\s#]*$/.test(before)) {
+      window.setTimeout(() => startCompletion(view), 0);
+    }
+  });
+
   function makeEditor(parent, doc, kind, ph) {
     const source = kind === "jp" ? colorCompletion : tagCompletion;
     const state = EditorState.create({
@@ -28410,6 +28426,7 @@
         syntaxHighlighting(hlStyle),
         livePreview(kind),
         autocompletion({ override: [source], activateOnTyping: true }),
+        kind === "md" ? imeTagTrigger : [],
         keymap.of([...defaultKeymap, ...historyKeymap, ...completionKeymap]),
         baseTheme,
         EditorView.lineWrapping,
